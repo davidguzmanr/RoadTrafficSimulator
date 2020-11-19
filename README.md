@@ -26,6 +26,4 @@ To run simulator
     cd RoadTrafficSimulator
     npm install
 
-And open index.html in your browser. Use **gulp** to rebuild project.
-
-[![Stories in Ready](https://badge.waffle.io/volkhin/roadtrafficsimulator.png?label=ready&title=Ready)](https://waffle.io/volkhin/roadtrafficsimulator)
+And open index.html in your browser. Use **gulp** to rebuild project. 

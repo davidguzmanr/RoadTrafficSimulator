@@ -1076,7 +1076,7 @@ Road = (function() {
     this.targetSideId = this.target.rect.getSectorId(this.source.rect.center());
     this.targetSide = this.target.rect.getSide(this.targetSideId).subsegment(0, 0.5);
     this.lanesNumber = min(this.sourceSide.length, this.targetSide.length) | 0;
-    this.lanesNumber = max(2, this.lanesNumber / settings.gridSize | 0);
+    this.lanesNumber = max(3, this.lanesNumber / settings.gridSize | 0);
     sourceSplits = this.sourceSide.split(this.lanesNumber, true);
     targetSplits = this.targetSide.split(this.lanesNumber);
     if ((this.lanes == null) || this.lanes.length < this.lanesNumber) {
