@@ -38,6 +38,7 @@ $(function() {
   guiWorld.add(world, 'load');
   guiWorld.add(world, 'clear');
   guiWorld.add(world, 'removeRandomCar');
+  guiWorld.add(world, 'getRoad');
   guiWorld.add(world, 'generateMap');
   guiWorld.add(world, 'carsNumber').min(0).max(200).step(1).listen();
   guiWorld.add(world, 'instantSpeed').step(0.00001).listen();
@@ -52,9 +53,9 @@ $(function() {
   guiSettings = gui.addFolder('settings');
   guiSettings.open();
   guiSettings.add(settings, 'lightsFlipInterval', 0, 400, 0.01).listen();
-  guiSettings.add(settings, 'lanesNumber', 1, 5, 1).listen();
+  guiSettings.add(settings, 'lanesNumber').min(2).max(10).step(1).listen();
 
-  return gui.add(settings, 'lanesNumber', 1, 5, 1).listen();
+  return gui;
 });
 
 
@@ -1085,7 +1086,7 @@ Road = (function() {
     this.targetSideId = this.target.rect.getSectorId(this.source.rect.center());
     this.targetSide = this.target.rect.getSide(this.targetSideId).subsegment(0, 0.5);
     this.lanesNumber = min(this.sourceSide.length, this.targetSide.length) | 0;
-    this.lanesNumber = max(settings.defaultTimeFactor, this.lanesNumber / settings.gridSize | 0);
+    this.lanesNumber = max(settings.lanesNumber | 0, this.lanesNumber / settings.gridSize | 0);
     sourceSplits = this.sourceSide.split(this.lanesNumber, true);
     targetSplits = this.targetSide.split(this.lanesNumber);
     if ((this.lanes == null) || this.lanes.length < this.lanesNumber) {
@@ -1435,7 +1436,9 @@ World = (function() {
   World.prototype.save = function() {
     var data;
     data = _.extend({}, this);
-    delete data.cars;
+//    delete data.cars;
+    console.log(data);
+
     return localStorage.world = JSON.stringify(data);
   };
 
@@ -1579,6 +1582,7 @@ World = (function() {
   };
 
   World.prototype.getRoad = function(id) {
+    console.log(this.roads.get(id));
     return this.roads.get(id);
   };
 
@@ -1647,10 +1651,11 @@ settings = {
     grid2: 'rgba(220, 220, 220, 0.5)',
     hoveredGrid: '#f4e8e1'
   },
-  fps: 30,
+  fps: 5,
   lightsFlipInterval: 160,
   gridSize: 14,
-  defaultTimeFactor: 5
+  defaultTimeFactor: 5,
+  lanesNumber: 8
 };
 
 module.exports = settings;

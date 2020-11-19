@@ -1,3 +1,5 @@
+'use strict'
+
 settings =
   colors:
     background: '#97a1a1'
@@ -12,10 +14,10 @@ settings =
     grid1: 'rgba(255, 255, 255, 0.5)'
     grid2: 'rgba(220, 220, 220, 0.5)'
     hoveredGrid: '#f4e8e1'
-  fps: 60
+  fps: 5
   lightsFlipInterval: 160
   gridSize: 14
-  defaultTimeFactor: 2
-  lanesNumber: 2
+  defaultTimeFactor: 5
+  lanesNumber: 4
 
 module.exports = settings

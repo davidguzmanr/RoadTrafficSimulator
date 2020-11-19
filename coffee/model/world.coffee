@@ -26,6 +26,7 @@ class World
     @roads = new Pool Road, obj.roads
     @cars = new Pool Car, obj.cars
     @carsNumber = 0
+    @lanesNumber = 2
     @time = 0
 
   save: ->
@@ -54,6 +55,7 @@ class World
     gridSize = settings.gridSize
     step = 5 * gridSize
     @carsNumber = 100
+    @lanesNumber = 2
     while intersectionsNumber > 0
       x = _.random minX, maxX
       y = _.random minY, maxY
