@@ -2,7 +2,7 @@
 
 require("blanket")({})
 
-require '../coffee//helpers'
+require '../coffee/helpers'
 World = require '../coffee/model/world'
 
 describe 'Application', ->
