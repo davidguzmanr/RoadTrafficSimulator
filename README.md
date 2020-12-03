@@ -9,7 +9,7 @@ traffic lights optimizer will be added to construct best possible schedule and
 avoid traffic jams.
 
 ## Demo
-http://volkhin.com/RoadTrafficSimulator
+https://davidguzmanr.github.io/files/RoadTrafficSimulator.html
 
 - Mouse and wheel - scrolling and zoom
 - shift + click -- create intersection

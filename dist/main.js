@@ -1673,7 +1673,7 @@ World = (function() {
       if (road != null) {
         lane = _.sample(road.lanes);
 //        console.log(lane.direction)
-        if (lane != null && lane.direction === Math.PI / 2) {
+        if (lane != null && lane.direction === -Math.PI / 2) {
           flag = false;
           this.carsNumber += 1;
           return this.addCar(new Car(lane));
@@ -1691,7 +1691,7 @@ World = (function() {
       if (road != null) {
         lane = _.sample(road.lanes);
 //        console.log(lane.direction)
-        if (lane != null && lane.direction === -Math.PI / 2) {
+        if (lane != null && lane.direction === Math.PI / 2) {
           flag = false;
           this.carsNumber += 1;
           return this.addCar(new Car(lane));
