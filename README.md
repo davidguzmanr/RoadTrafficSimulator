@@ -11,9 +11,9 @@ avoid traffic jams.
 ## Demo
 http://volkhin.com/RoadTrafficSimulator
 
-* Mouse and wheel - scrolling and zoom
-* shift + click -- create intersection
-* shift + drag from one intersection to another -- create road
+- Mouse and wheel - scrolling and zoom
+- shift + click -- create intersection
+- shift + drag from one intersection to another -- create road
 
 Or just press generateMap in control panel and add cars with carsNumber slider.
 

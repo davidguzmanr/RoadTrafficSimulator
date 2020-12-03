@@ -26,7 +26,7 @@ $(function() {
   world.load();
   if (world.intersections.length === 0) {
     world.generateMap();
-    world.carsNumber = 100;
+    world.carsNumber = 10;
   }
   window.visualizer = new Visualizer(world);
   visualizer.start();
@@ -37,8 +37,12 @@ $(function() {
   guiWorld.add(world, 'save');
   guiWorld.add(world, 'load');
   guiWorld.add(world, 'clear');
-  guiWorld.add(world, 'removeRandomCar');
-  guiWorld.add(world, 'getRoad');
+//  guiWorld.add(world, 'removeRandomCar');
+//  guiWorld.add(world, 'addRandomCar');
+  guiWorld.add(world, 'addCarEast');
+  guiWorld.add(world, 'addCarWest');
+  guiWorld.add(world, 'addCarNorth');
+  guiWorld.add(world, 'addCarSouth');
   guiWorld.add(world, 'generateMap');
   guiWorld.add(world, 'carsNumber').min(0).max(200).step(1).listen();
   guiWorld.add(world, 'instantSpeed').step(0.00001).listen();
@@ -1436,21 +1440,25 @@ World = (function() {
   World.prototype.save = function() {
     var data;
     data = _.extend({}, this);
-//    delete data.cars;
+    delete data.cars;
     console.log(data);
 
     return localStorage.world = JSON.stringify(data);
   };
 
   World.prototype.load = function(data) {
-    var id, intersection, road, _ref, _ref1, _results;
+    var id, intersection, road, _ref, _ref1, _refcars, _results;
     data = data || localStorage.world;
     data = data && JSON.parse(data);
+    _refcars = this.cars;
     if (data == null) {
       return;
     }
     this.clear();
     this.carsNumber = data.carsNumber || 0;
+//    for (id in _refcars.objects){
+//      this.addCar(id);
+//    }
     _ref = data.intersections;
     for (id in _ref) {
       intersection = _ref[id];
@@ -1487,7 +1495,7 @@ World = (function() {
     map = {};
     gridSize = settings.gridSize;
     step = 5 * gridSize;
-    this.carsNumber = 100;
+    this.carsNumber = 10;
     while (intersectionsNumber > 0) {
       x = _.random(minX, maxX);
       y = _.random(minY, maxY);
@@ -1582,7 +1590,7 @@ World = (function() {
   };
 
   World.prototype.getRoad = function(id) {
-    console.log(this.roads.get(id));
+//    console.log(this.roads.get(id));
     return this.roads.get(id);
   };
 
@@ -1609,10 +1617,85 @@ World = (function() {
   World.prototype.addRandomCar = function() {
     var lane, road;
     road = _.sample(this.roads.all());
+    lane = _.sample(road.lanes);
+//    console.log(lane);
     if (road != null) {
       lane = _.sample(road.lanes);
       if (lane != null) {
+//        console.log(lane);
         return this.addCar(new Car(lane));
+      }
+    }
+  };
+
+  World.prototype.addCarEast = function() {
+    var flag;
+    var lane, road;
+    flag = true;
+    while (flag){
+      road = _.sample(this.roads.all());
+      if (road != null) {
+        lane = _.sample(road.lanes);
+//        console.log(lane.direction)
+        if (lane != null && lane.direction === 0) {
+          flag = false;
+          this.carsNumber += 1;
+          return this.addCar(new Car(lane));
+        }
+      }
+    }
+  };
+
+  World.prototype.addCarWest = function() {
+    var flag;
+    var lane, road;
+    flag = true;
+    while (flag){
+      road = _.sample(this.roads.all());
+      if (road != null) {
+        lane = _.sample(road.lanes);
+//        console.log(lane.direction)
+        if (lane != null && lane.direction === Math.PI) {
+          flag = false;
+          this.carsNumber += 1;
+          return this.addCar(new Car(lane));
+        }
+      }
+    }
+  };
+
+  World.prototype.addCarNorth = function() {
+    var flag;
+    var lane, road;
+    flag = true;
+    while (flag){
+      road = _.sample(this.roads.all());
+      if (road != null) {
+        lane = _.sample(road.lanes);
+//        console.log(lane.direction)
+        if (lane != null && lane.direction === Math.PI / 2) {
+          flag = false;
+          this.carsNumber += 1;
+          return this.addCar(new Car(lane));
+        }
+      }
+    }
+  };
+
+  World.prototype.addCarSouth = function() {
+    var flag;
+    var lane, road;
+    flag = true;
+    while (flag){
+      road = _.sample(this.roads.all());
+      if (road != null) {
+        lane = _.sample(road.lanes);
+//        console.log(lane.direction)
+        if (lane != null && lane.direction === -Math.PI / 2) {
+          flag = false;
+          this.carsNumber += 1;
+          return this.addCar(new Car(lane));
+        }
       }
     }
   };
@@ -1651,11 +1734,12 @@ settings = {
     grid2: 'rgba(220, 220, 220, 0.5)',
     hoveredGrid: '#f4e8e1'
   },
-  fps: 5,
+  fps: 30,
   lightsFlipInterval: 160,
   gridSize: 14,
   defaultTimeFactor: 5,
-  lanesNumber: 8
+  carsNumber: 10,
+  lanesNumber: 3
 };
 
 module.exports = settings;
@@ -1667,6 +1751,7 @@ var Graphics, PI,
   __slice = [].slice;
 
 PI = Math.PI;
+
 
 require('../helpers.coffee');
 
