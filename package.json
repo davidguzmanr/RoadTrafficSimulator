@@ -21,10 +21,20 @@
       "data-cover-reporter-options": {
         "shortnames": true
       }
+    },
+    "browser": {
+      "fs": false
+    },
+    "node": {
+      "fs": "empty"
     }
   },
   "license": "MIT",
-  "dependencies": {},
+  "dependencies": {
+    "easy-file-manager": "^0.1.3",
+    "file-system": "^2.2.2",
+    "fs": "0.0.1-security"
+  },
   "devDependencies": {
     "blanket": "~1.1",
     "browserify": "~4.1",
@@ -46,6 +56,7 @@
     "jquery": "~2.1",
     "jquery-mousewheel": "~3.1",
     "underscore": "~1.6",
-    "vinyl-source-stream": "~0.1"
+    "vinyl-source-stream": "~0.1",
+    "file-system": "~2.2"
   }
 }

@@ -3,6 +3,7 @@
 require './helpers'
 $ = require 'jquery'
 _ = require 'underscore'
+fs = require 'fs'
 Visualizer = require './visualizer/visualizer'
 DAT = require 'dat-gui'
 World = require './model/world'

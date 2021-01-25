@@ -84,6 +84,7 @@ class Visualizer
       @ctx.fillStyle = "black"
       @ctx.font = "1px Arial"
       center = intersection.rect.center()
+      road_id =
       flipInterval = Math.round(intersection.controlSignals.flipInterval * 100) / 100
       phaseOffset = Math.round(intersection.controlSignals.phaseOffset * 100) / 100
       @ctx.fillText flipInterval + ' ' + phaseOffset, center.x, center.y
@@ -93,6 +94,14 @@ class Visualizer
     throw Error 'invalid road' if not road.source? or not road.target?
     sourceSide = road.sourceSide
     targetSide = road.targetSide
+
+    # Comment-David
+    # Write the road id in the middle of the road
+    if @debug
+      @ctx.save()
+      @ctx.fillStyle = "red"
+      @ctx.font = "1px Arial"
+      @ctx.fillText "TEST", -224, 42
 
     @ctx.save()
     @ctx.lineWidth = 0.4
@@ -120,6 +129,7 @@ class Visualizer
       @graphics.stroke settings.colors.roadMarking
     @ctx.restore()
 
+
   drawCar: (car) ->
     angle = car.direction
     center = car.coords
@@ -138,8 +148,8 @@ class Visualizer
     @graphics.restore()
     if @debug
       @ctx.save()
-      @ctx.fillStyle = "black"
-      @ctx.font = "1px Arial"
+      @ctx.fillStyle = "red"
+      @ctx.font = "10px Arial"
       @ctx.fillText car.id, center.x, center.y
 
       if (curve = car.trajectory.temp?.lane)?

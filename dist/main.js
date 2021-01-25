@@ -16,6 +16,20 @@ World = require('./model/world');
 
 settings = require('./settings');
 
+// Save file
+//fs = require('fs');
+//
+//fs.writeFile("/test", "Hey there!", function(err) {
+//    if(err) {
+//        return console.log(err);
+//    }
+//    console.log("The file was saved!");
+//});
+//
+//// Or
+//fs.writeFileSync('/test-sync', 'Hey there!');
+
+
 $(function() {
   var canvas, gui, guiVisualizer, guiWorld, guiSettings;
   canvas = $('<canvas />', {
@@ -26,7 +40,7 @@ $(function() {
   world.load();
   if (world.intersections.length === 0) {
     world.generateMap();
-    world.carsNumber = 10;
+    world.carsNumber = 50;
   }
   window.visualizer = new Visualizer(world);
   visualizer.start();
@@ -45,7 +59,7 @@ $(function() {
   guiWorld.add(world, 'addCarSouth');
   guiWorld.add(world, 'generateMap');
   guiWorld.add(world, 'carsNumber').min(0).max(200).step(1).listen();
-  guiWorld.add(world, 'instantSpeed').step(0.00001).listen();
+  guiWorld.add(world, 'averageSpeed').step(0.00001).listen();
 
   guiVisualizer = gui.addFolder('visualizer');
   guiVisualizer.open();
@@ -62,7 +76,6 @@ $(function() {
   return gui;
 });
 
-
 },{"./helpers":6,"./model/world":15,"./settings":16,"./visualizer/visualizer":24,"dat-gui":27,"jquery":31,"underscore":32}],2:[function(require,module,exports){
 'use strict';
 var Curve, Segment;
@@ -70,6 +83,10 @@ var Curve, Segment;
 require('../helpers');
 
 Segment = require('./segment');
+
+//console.log("Saving...");
+//var fs = require('fs');
+//console.log("End");
 
 Curve = (function() {
   function Curve(A, B, O, Q) {
@@ -402,7 +419,7 @@ Function.prototype.property = function(prop, desc) {
 
 },{}],7:[function(require,module,exports){
 'use strict';
-var Car, Trajectory, max, min, random, sqrt, _;
+var Car, Trajectory, max, min, random, sqrt, _, type_of_car;
 
 max = Math.max, min = Math.min, random = Math.random, sqrt = Math.sqrt;
 
@@ -412,21 +429,66 @@ _ = require('underscore');
 
 Trajectory = require('./trajectory');
 
+// Comment-David
+// I will add the vehicles in this proportion: cars-80%, buses-15%, bikes-5%.
+// Cars will be different colors, buses will be green and bikes red/orange.
+// They will have different dimensions
+
 Car = (function() {
   function Car(lane, position) {
-    this.id = _.uniqueId('car');
-    this.color = (300 + 240 * random() | 0) % 360;
-    this._speed = 0;
-    this.width = 1.7;
-    this.length = 3 + 2 * random();
-    this.maxSpeed = 30;
-    this.s0 = 2;
-    this.timeHeadway = 1.5;
-    this.maxAcceleration = 1;
-    this.maxDeceleration = 3;
-    this.trajectory = new Trajectory(this, lane, position);
-    this.alive = true;
-    this.preferedLane = null;
+    type_of_car = random();
+    if (type_of_car < 0.80) {
+      // console.log('Car');
+      this.id = _.uniqueId('car');
+      // Cars will have different colors
+      this.color = (300 + 240 * random() | 0) % 360;
+      this._speed = 0;
+      this.width = 1.2;
+      // They will also have a fixed length
+      this.length = 3.5;
+      this.maxSpeed = 30;
+      this.s0 = 2;
+      this.timeHeadway = 1.5;
+      this.maxAcceleration = 1;
+      this.maxDeceleration = 3;
+      this.trajectory = new Trajectory(this, lane, position);
+      this.alive = true;
+      this.preferedLane = null;
+    }
+    else if (type_of_car > 0.8 && type_of_car < 0.95) {
+      // console.log('Bus');
+      this.id = _.uniqueId('car');
+      this.color = (100  | 0) % 360;
+      this._speed = 0;
+      this.width = 2.0;
+      this.length = 8.0;
+      // Buses will be slower than the cars
+      this.maxSpeed = 20;
+      this.s0 = 2;
+      this.timeHeadway = 1.5;
+      this.maxAcceleration = 0.75;
+      this.maxDeceleration = 2;
+      this.trajectory = new Trajectory(this, lane, position);
+      this.alive = true;
+      this.preferedLane = null;
+    }
+    else{
+      // console.log('Bike');
+      this.id = _.uniqueId('car');
+      this.color = (10 | 0) % 360;
+      this._speed = 0;
+      this.width = 0.5;
+      this.length = 1.5;
+      // Bikes will be the slowest
+      this.maxSpeed = 5;
+      this.s0 = 2;
+      this.timeHeadway = 1.5;
+      this.maxAcceleration = 0.5;
+      this.maxDeceleration = 1;
+      this.trajectory = new Trajectory(this, lane, position);
+      this.alive = true;
+      this.preferedLane = null;
+    }
   }
 
   Car.property('coords', {
@@ -1422,6 +1484,24 @@ World = (function() {
       }
       return (_.reduce(speeds, function(a, b) {
         return a + b;
+      })) / 1;
+    }
+  });
+
+  // Comment-David
+  // The flux is defined as j = I/A, where I = dN/dt (A=area, N=numbers of cars, t=time). I don't know what could be A in
+  // this case (maybe number of lanes), so I am going to measure the average speed for the moment.
+  World.property('averageSpeed', {
+    get: function() {
+      var speeds;
+      speeds = _.map(this.cars.all(), function(car) {
+        return car.speed;
+      });
+      if (speeds.length === 0) {
+        return 0;
+      }
+      return (_.reduce(speeds, function(a, b) {
+        return a + b;
       })) / speeds.length;
     }
   });
@@ -1495,7 +1575,7 @@ World = (function() {
     map = {};
     gridSize = settings.gridSize;
     step = 5 * gridSize;
-    this.carsNumber = 10;
+    this.carsNumber = 50;
     while (intersectionsNumber > 0) {
       x = _.random(minX, maxX);
       y = _.random(minY, maxY);
@@ -1618,15 +1698,22 @@ World = (function() {
     var lane, road;
     road = _.sample(this.roads.all());
     lane = _.sample(road.lanes);
-//    console.log(lane);
     if (road != null) {
       lane = _.sample(road.lanes);
       if (lane != null) {
-//        console.log(lane);
+        // Comment-David
+        // To see what attributes the lane class has, lane.road seems useful to create the moving lane
+        // console.log(lane)
+        // Number of roads in the map
+        console.log(Object.keys(this.roads.all()).length)
+        console.log(this.roads.all())
         return this.addCar(new Car(lane));
       }
     }
   };
+
+  // Comment-David
+  // The next functions will try to create traffic in a certain direction
 
   World.prototype.addCarEast = function() {
     var flag;
@@ -1636,11 +1723,10 @@ World = (function() {
       road = _.sample(this.roads.all());
       if (road != null) {
         lane = _.sample(road.lanes);
-//        console.log(lane.direction)
         if (lane != null && lane.direction === 0) {
           flag = false;
           this.carsNumber += 1;
-          return this.addCar(new Car(lane));
+          return this.addCar(new Car(lane, 0.8, 0.7));
         }
       }
     }
@@ -1654,7 +1740,7 @@ World = (function() {
       road = _.sample(this.roads.all());
       if (road != null) {
         lane = _.sample(road.lanes);
-//        console.log(lane.direction)
+//        console.log(lane.road)
         if (lane != null && lane.direction === Math.PI) {
           flag = false;
           this.carsNumber += 1;
@@ -1672,7 +1758,6 @@ World = (function() {
       road = _.sample(this.roads.all());
       if (road != null) {
         lane = _.sample(road.lanes);
-//        console.log(lane.direction)
         if (lane != null && lane.direction === -Math.PI / 2) {
           flag = false;
           this.carsNumber += 1;
@@ -1737,8 +1822,8 @@ settings = {
   fps: 30,
   lightsFlipInterval: 160,
   gridSize: 14,
-  defaultTimeFactor: 5,
-  carsNumber: 10,
+  defaultTimeFactor: 3,
+  carsNumber: 50,
   lanesNumber: 3
 };
 
@@ -19747,3 +19832,4 @@ return jQuery;
 }).call(this);
 
 },{}]},{},[1])
+
