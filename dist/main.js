@@ -58,6 +58,7 @@ $(function() {
   guiWorld.add(world, 'addCarNorth');
   guiWorld.add(world, 'addCarSouth');
   guiWorld.add(world, 'generateMap');
+  guiWorld.add(world, 'changeNumberofLanes');
   guiWorld.add(world, 'carsNumber').min(0).max(200).step(1).listen();
   guiWorld.add(world, 'averageSpeed').step(0.00001).listen();
 
@@ -1622,6 +1623,18 @@ World = (function() {
     }
     return null;
   };
+  // Comment-David
+  // Function to change the number of lanes
+  World.prototype.changeNumberofLanes = function() {
+    var road, lane;
+    road = _.sample(this.roads.all());
+    // It actually make changes in the whole array, it doesn't make a copy, which is exactly what I want, which is nice
+    road.lanesNumber -= 1;
+    road.lanes = road.lanes.slice(0,road.lanesNumber);
+    console.log(road)
+
+    console.log(this.roads.all())
+  };
 
   World.prototype.clear = function() {
     return this.set({});
@@ -1705,8 +1718,8 @@ World = (function() {
         // To see what attributes the lane class has, lane.road seems useful to create the moving lane
         // console.log(lane)
         // Number of roads in the map
-        console.log(Object.keys(this.roads.all()).length)
-        console.log(this.roads.all())
+        // console.log(Object.keys(this.roads.all()).length)
+        // console.log(this.roads.all())
         return this.addCar(new Car(lane));
       }
     }
@@ -2524,7 +2537,16 @@ Visualizer = (function() {
       this.ctx.setLineDash([dashSize]);
       this.graphics.stroke(settings.colors.roadMarking);
     }
-    return this.ctx.restore();
+    this.ctx.restore();
+    // Comment-David
+    // This add the road-id to the debug feature
+    if (this.debug) {
+      this.ctx.save();
+      this.ctx.fillStyle = "red";
+      this.ctx.font = "1px Arial";
+      this.ctx.fillText(road.id, (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y) / 2);
+      return this.ctx.restore();
+    }
   };
 
   Visualizer.prototype.drawCar = function(car) {

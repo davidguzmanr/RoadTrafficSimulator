@@ -148,8 +148,8 @@ class Visualizer
     @graphics.restore()
     if @debug
       @ctx.save()
-      @ctx.fillStyle = "red"
-      @ctx.font = "10px Arial"
+      @ctx.fillStyle = "black"
+      @ctx.font = "1px Arial"
       @ctx.fillText car.id, center.x, center.y
 
       if (curve = car.trajectory.temp?.lane)?
