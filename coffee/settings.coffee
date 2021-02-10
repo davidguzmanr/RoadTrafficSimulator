@@ -19,5 +19,8 @@ settings =
   gridSize: 14
   defaultTimeFactor: 5
   lanesNumber: 4
+  probCar: 0.8
+  probBus: 0.15
+  probBike: 0.05
 
 module.exports = settings

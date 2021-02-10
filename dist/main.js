@@ -73,6 +73,9 @@ $(function() {
   guiSettings.open();
   guiSettings.add(settings, 'lightsFlipInterval', 0, 400, 0.01).listen();
   guiSettings.add(settings, 'lanesNumber').min(2).max(10).step(1).listen();
+  guiSettings.add(settings, 'probCar').min(0).max(1).step(0.05).listen();
+  guiSettings.add(settings, 'probBus').min(0).max(1).step(0.05).listen();
+  guiSettings.add(settings, 'probBike').min(0).max(1).step(0.05).listen();
 
   return gui;
 });
@@ -418,17 +421,19 @@ Function.prototype.property = function(prop, desc) {
 };
 
 
-},{}],7:[function(require,module,exports){
+},{"../helpers":6}],7:[function(require,module,exports){
 'use strict';
-var Car, Trajectory, max, min, random, sqrt, _, type_of_car;
-
-max = Math.max, min = Math.min, random = Math.random, sqrt = Math.sqrt;
+var Car, Trajectory, max, min, random, sqrt, _, type_of_car, settings, total_prob, vehicle_probability_dist;
 
 require('../helpers');
+
+settings = require('../settings');
 
 _ = require('underscore');
 
 Trajectory = require('./trajectory');
+
+max = Math.max, min = Math.min, random = Math.random, sqrt = Math.sqrt;
 
 // Comment-David
 // I will add the vehicles in this proportion: cars-80%, buses-15%, bikes-5%.
@@ -438,7 +443,9 @@ Trajectory = require('./trajectory');
 Car = (function() {
   function Car(lane, position) {
     type_of_car = random();
-    if (type_of_car < 0.80) {
+    total_prob = settings.probCar + settings.probBus + settings.probBike;
+    vehicle_probability_dist = [settings.probCar/total_prob, settings.probBus/total_prob, settings.probBike/total_prob];
+    if (type_of_car < vehicle_probability_dist[0]) {
       // console.log('Car');
       this.id = _.uniqueId('car');
       // Cars will have different colors
@@ -456,7 +463,7 @@ Car = (function() {
       this.alive = true;
       this.preferedLane = null;
     }
-    else if (type_of_car > 0.8 && type_of_car < 0.95) {
+    else if (type_of_car > vehicle_probability_dist[0] && type_of_car < vehicle_probability_dist[1]) {
       // console.log('Bus');
       this.id = _.uniqueId('car');
       this.color = (100  | 0) % 360;
@@ -631,7 +638,7 @@ Car = (function() {
 module.exports = Car;
 
 
-},{"../helpers":6,"./trajectory":14,"underscore":32}],8:[function(require,module,exports){
+},{"../helpers":6,"../settings":16,"./trajectory":14,"underscore":32}],8:[function(require,module,exports){
 'use strict';
 var ControlSignals, random, settings,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
@@ -1837,7 +1844,10 @@ settings = {
   gridSize: 14,
   defaultTimeFactor: 3,
   carsNumber: 50,
-  lanesNumber: 3
+  lanesNumber: 3,
+  probCar: 0.8,
+  probBus: 0.15,
+  probBike: 0.05
 };
 
 module.exports = settings;
