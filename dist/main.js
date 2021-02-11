@@ -1764,6 +1764,9 @@ World = (function() {
         if (lane != null && lane.direction === Math.PI) {
           flag = false;
           this.carsNumber += 1;
+          // Comment-David
+          // To see the attributes of Car
+          console.log(new Car(lane));
           return this.addCar(new Car(lane));
         }
       }
@@ -2517,8 +2520,8 @@ Visualizer = (function() {
     }
   };
 
-  Visualizer.prototype.drawRoad = function(road, alpha) {
-    var dashSize, lane, leftLine, line, rightLine, sourceSide, targetSide, _i, _len, _ref;
+  Visualizer.prototype.drawRoad = function(road, car, alpha) {
+    var dashSize, lane, leftLine, line, rightLine, sourceSide, targetSide, _i, _len, _ref, _refcars, id, car, flux;
     if ((road.source == null) || (road.target == null)) {
       throw Error('invalid road');
     }
@@ -2555,6 +2558,17 @@ Visualizer = (function() {
       this.ctx.fillStyle = "red";
       this.ctx.font = "1px Arial";
       this.ctx.fillText(road.id, (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y) / 2);
+
+      // This will measure the flux in each road, will be useful when making the decision of adding more lanes
+      flux = 0;
+      _refcars = this.world.cars.all();
+      for (id in _refcars){
+        car = _refcars[id];
+        if (car.trajectory.current._lane.road.id == road.id){
+          flux += 1;
+        }
+      }
+      this.ctx.fillText("# cars: " + flux, (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y + 2) / 2);
       return this.ctx.restore();
     }
   };
