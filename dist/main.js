@@ -1151,10 +1151,10 @@ Road = (function() {
 
   Road.prototype.getTurnDirection = function(other) {
     var side1, side2, turnNumber;
-    // Si lo comentamos dejan de haber muchos errores...
-//    if (this.target !== other.source) {
-//      throw Error('invalid roads');
-//    }
+    // If we comment this if a lot of errors go away...
+    if (this.target !== other.source) {
+      throw Error('invalid roads');
+    }
     side1 = this.targetSideId;
     side2 = other.sourceSideId;
     // % 4 is because there were 4 lanes in the original?
@@ -1167,8 +1167,7 @@ Road = (function() {
       lanes_proportion = 0.5;
     }
     else {
-      // We have 3 lanes
-      lanes_proportion = known_number_lanes*(0.5/3)
+      lanes_proportion = known_number_lanes*(0.5/settings.lanesNumber)
     }
 
     if (!(this.source && this.target)) {
@@ -1183,7 +1182,7 @@ Road = (function() {
     this.targetSide = this.target.rect.getSide(this.targetSideId).subsegment(0, lanes_proportion);
 
     // Comment-David
-    // This allows us to change the number of lanes from the slider
+    // This allows us to change the number of lanes from the slider and we ignore it when we reduce/add a lane
     if (known_number_lanes == null){
       this.lanesNumber = min(this.sourceSide.length, this.targetSide.length);
       this.lanesNumber = max(settings.lanesNumber, this.lanesNumber / settings.gridSize);
