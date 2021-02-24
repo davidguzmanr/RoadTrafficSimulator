@@ -59,6 +59,7 @@ $(function() {
   guiWorld.add(world, 'addCarSouth');
   guiWorld.add(world, 'generateMap');
   guiWorld.add(world, 'changeNumberofLanes');
+  guiWorld.add(world, 'StopRoad');
   guiWorld.add(world, 'carsNumber').min(0).max(200).step(1).listen();
   guiWorld.add(world, 'averageSpeed').step(0.00001).listen();
 
@@ -739,6 +740,14 @@ ControlSignals = (function() {
     }
   };
 
+  ControlSignals.prototype.Stop = function(delta) {
+    this.time += delta;
+    if (this.time > this.flipInterval) {
+      this.flip();
+      return this.time -= this.flipInterval;
+    }
+  };
+
   return ControlSignals;
 
 })();
@@ -1142,25 +1151,44 @@ Road = (function() {
 
   Road.prototype.getTurnDirection = function(other) {
     var side1, side2, turnNumber;
-    if (this.target !== other.source) {
-      throw Error('invalid roads');
-    }
+    // Si lo comentamos dejan de haber muchos errores...
+//    if (this.target !== other.source) {
+//      throw Error('invalid roads');
+//    }
     side1 = this.targetSideId;
     side2 = other.sourceSideId;
+    // % 4 is because there were 4 lanes in the original?
     return turnNumber = (side2 - side1 - 1 + 8) % 4;
   };
 
-  Road.prototype.update = function() {
-    var i, sourceSplits, targetSplits, _base, _i, _j, _ref, _ref1, _results;
+  Road.prototype.update = function(known_number_lanes=null) {
+    var i, sourceSplits, targetSplits, _base, _i, _j, _ref, _ref1, _results, lanes_proportion;
+    if (known_number_lanes == null){
+      lanes_proportion = 0.5;
+    }
+    else {
+      // We have 3 lanes
+      lanes_proportion = known_number_lanes*(0.5/3)
+    }
+
     if (!(this.source && this.target)) {
       throw Error('incomplete road');
     }
+
     this.sourceSideId = this.source.rect.getSectorId(this.target.rect.center());
-    this.sourceSide = this.source.rect.getSide(this.sourceSideId).subsegment(0.5, 1.0);
+    // Only half of the road?
+    this.sourceSide = this.source.rect.getSide(this.sourceSideId).subsegment(1-lanes_proportion, 1.0);
     this.targetSideId = this.target.rect.getSectorId(this.source.rect.center());
-    this.targetSide = this.target.rect.getSide(this.targetSideId).subsegment(0, 0.5);
-    this.lanesNumber = min(this.sourceSide.length, this.targetSide.length) | 0;
-    this.lanesNumber = max(settings.lanesNumber | 0, this.lanesNumber / settings.gridSize | 0);
+    // Only half of the road?
+    this.targetSide = this.target.rect.getSide(this.targetSideId).subsegment(0, lanes_proportion);
+
+    // Comment-David
+    // This allows us to change the number of lanes from the slider
+    if (known_number_lanes == null){
+      this.lanesNumber = min(this.sourceSide.length, this.targetSide.length);
+      this.lanesNumber = max(settings.lanesNumber, this.lanesNumber / settings.gridSize);
+    }
+
     sourceSplits = this.sourceSide.split(this.lanesNumber, true);
     targetSplits = this.targetSide.split(this.lanesNumber);
     if ((this.lanes == null) || this.lanes.length < this.lanesNumber) {
@@ -1633,14 +1661,52 @@ World = (function() {
   // Comment-David
   // Function to change the number of lanes
   World.prototype.changeNumberofLanes = function() {
-    var road, lane;
-    road = _.sample(this.roads.all());
-    // It actually make changes in the whole array, it doesn't make a copy, which is exactly what I want, which is nice
+    var road, next_road, _refroads, id, x, lane, removed_lane, added_lane, new_lanes;
+
+    _refroads = this.roads.all();
+    id = _.sample(this.roads.all()).id;
+    road = _refroads[id];
+    // This reduces a lane in one direction
+    removed_lane = road.leftmostLane; // Equivalent to road.lanes[road.lanesNumbers - 1]
     road.lanesNumber -= 1;
     road.lanes = road.lanes.slice(0,road.lanesNumber);
-    console.log(road)
+    road.update(road.lanesNumber);
 
-    console.log(this.roads.all())
+    // Search for the road next to the current road
+    for (id in _refroads){
+      x = _refroads[id]
+      if (x.source.id == road.target.id && x.target.id == road.source.id){
+        next_road = x;
+      }
+    }
+    // This adds a lane in the other direction
+    new_lanes = next_road.lanes;
+    // Change the direction and other attributes to make it go in the other direction
+    removed_lane.direction += Math.PI;
+    removed_lane.road = next_road;
+//    removed_lane.sourceSegment, removed_lane.targetSegment = removed_lane.targetSegment, removed_lane.sourceSegment;
+
+    new_lanes.unshift(removed_lane); // Add removed_lane at [0], i.e., rightmostLane
+    next_road.lanes = new_lanes;
+    // next_road.rightmostLane = removed_lane;
+    next_road.lanesNumber += 1;
+    next_road.update(next_road.lanesNumber);
+
+    console.log(road);
+    console.log(next_road);
+
+  };
+
+  // Comment-David
+  // Function to stop the traffic in a road
+  World.prototype.StopRoad = function() {
+    var road, _refroads, id, x, lane, removed_lane, added_lane, new_lanes;
+
+    _refroads = this.roads.all();
+    id = _.sample(this.roads.all()).id;
+    road = _refroads[id];
+    road.source.controlSignals.
+    console.log(road);
   };
 
   World.prototype.clear = function() {
@@ -1835,6 +1901,7 @@ settings = {
     intersection: '#586970',
     road: '#586970',
     roadMarking: '#bbb',
+    roadMiddleLane: '#F1F502',
     hoveredIntersection: '#3d4c53',
     tempRoad: '#aaa',
     gridPoint: '#586970',
@@ -2521,7 +2588,7 @@ Visualizer = (function() {
   };
 
   Visualizer.prototype.drawRoad = function(road, car, alpha) {
-    var dashSize, lane, leftLine, line, rightLine, sourceSide, targetSide, _i, _len, _ref, _refcars, id, car, flux;
+    var dashSize, lane, leftLine, line, rightLine, middleLine, borders, sourceSide, targetSide, _i, _len, _ref, _refcars, id, car, flux;
     if ((road.source == null) || (road.target == null)) {
       throw Error('invalid road');
     }
@@ -2529,17 +2596,27 @@ Visualizer = (function() {
     targetSide = road.targetSide;
     this.ctx.save();
     this.ctx.lineWidth = 0.4;
+//    This is the original, but the middle line doesn't work well when we add/remove lanes
     leftLine = road.leftmostLane.leftBorder;
     this.graphics.drawSegment(leftLine);
-    this.graphics.stroke(settings.colors.roadMarking);
+    this.graphics.stroke(settings.colors.roadMiddleLane);
     rightLine = road.rightmostLane.rightBorder;
     this.graphics.drawSegment(rightLine);
     this.graphics.stroke(settings.colors.roadMarking);
+
+//    middleLine = road.leftmostLane.leftBorder;
+//    this.graphics.drawSegment(leftLine);
+//    this.graphics.stroke(settings.colors.roadMarking);
+//    borders = road.rightmostLane.rightBorder;
+//    this.graphics.drawSegment(borders);
+//    this.graphics.stroke(settings.colors.roadMarking);
+
     this.ctx.restore();
     this.graphics.polyline(sourceSide.source, sourceSide.target, targetSide.source, targetSide.target);
     this.graphics.fill(settings.colors.road, alpha);
     this.ctx.save();
-    _ref = road.lanes.slice(1);
+    _ref = road.lanes.slice(1, road.lanes.length);
+//    console.log(_ref);
     for (_i = 0, _len = _ref.length; _i < _len; _i++) {
       lane = _ref[_i];
       line = lane.rightBorder;
@@ -2559,7 +2636,7 @@ Visualizer = (function() {
       this.ctx.font = "1px Arial";
       this.ctx.fillText(road.id, (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y) / 2);
 
-      // This will measure the flux in each road, will be useful when making the decision of adding more lanes
+      // This will measure the flux in each road, it will be useful when making the decision of adding more lanes
       flux = 0;
       _refcars = this.world.cars.all();
       for (id in _refcars){
