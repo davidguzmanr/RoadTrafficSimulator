@@ -597,24 +597,46 @@ Car = (function() {
   };
 
   Car.prototype.pickNextLane = function() {
-    var laneNumber, nextRoad, turnNumber;
-    if (this.nextLane) {
-      throw Error('next lane is already chosen');
-    }
+    var laneNumber, nextRoad, turnNumber, lane, R;
+//    if (this.nextLane || (this.car.nextLane && this.car.nextLane.isClosed)) {
+//      throw Error('next lane is already chosen');
+//    }
+
     this.nextLane = null;
     nextRoad = this.pickNextRoad();
     if (!nextRoad) {
       return null;
     }
+
+    for (lane in nextRoad.lanes){
+      nextRoad.lanes[lane].tryOpen();
+    }
+
+    for (lane in nextRoad.oppositeRoad.lanes){
+      nextRoad.oppositeRoad.lanes[lane].tryOpen();
+    }
+
     turnNumber = this.trajectory.current.lane.road.getTurnDirection(nextRoad);
     laneNumber = (function() {
       switch (turnNumber) {
         case 0:
-          return nextRoad.lanesNumber - 1;
+          R = nextRoad.lanesNumber - 1;
+          while(nextRoad.lanes[R].isClosed){
+            R -= 1;
+          }
+          return R;
         case 1:
-          return _.random(0, nextRoad.lanesNumber - 1);
+          R = _.random(0, nextRoad.lanesNumber - 1);
+          while(nextRoad.lanes[R].isClosed){
+            R = _.random(0, nextRoad.lanesNumber - 1);
+          }
+          return R;
         case 2:
-          return 0;
+          R = 0;
+          while(nextRoad.lanes[R].isClosed){
+            R += 1;
+          }
+          return R;
       }
     })();
     this.nextLane = nextRoad.lanes[laneNumber];
@@ -920,7 +942,8 @@ Lane = (function() {
     this.leftmostAdjacent = null;
     this.rightmostAdjacent = null;
     this.isClosed = false;
-    this.carsPositions = [];//Mario: It was an object, changed to array so we can access length (hope nothing breaks)
+    //Mario: It was an object, changed to array so we can access length (hope nothing breaks)
+    this.carsPositions = [];
     this.update();
   }
 
@@ -976,12 +999,33 @@ Lane = (function() {
   //Mario: Tries to open the lane if it is closed
   //Incomplete function, TODO
   Lane.prototype.tryOpen = function() {
+    var road, next_road, new_lanes;
+    road = this.road;
     if (this.isClosed == false) {
-      throw Error('Lane is already open.');
+      return true;
     }
-    if (this.carPositions.length === 0)//If it is finally empty, we can proceed with 
+
+    if (this.carsPositions.length === 0) //If it is finally empty, we can proceed with
     {
-      //SWAP NEEDED HERE
+      road.lanesNumber -= 1;
+      road.lanes = road.lanes.slice(0,road.lanesNumber);
+      road.update(road.lanesNumber);
+
+      // This adds a lane in the other direction
+      next_road = road.oppositeRoad;
+      new_lanes = next_road.lanes;
+      // Change the direction and other attributes to make it go in the other direction
+      this.direction += Math.PI;
+      this.road = next_road;
+  //    removed_lane.sourceSegment, removed_lane.targetSegment = removed_lane.targetSegment, removed_lane.sourceSegment;
+
+      new_lanes.unshift(this); // Add removed_lane at [0], i.e., rightmostLane
+
+      next_road.lanes = new_lanes;
+      // next_road.rightmostLane = removed_lane;
+      next_road.lanesNumber += 1;
+      next_road.update(next_road.lanesNumber);
+
       this.isClosed = false;
       return true;
     }
@@ -1123,6 +1167,8 @@ Road = (function() {
     this.source = source;
     this.target = target;
     this.id = _.uniqueId('road');
+    // Mario: Initializing as null road. Might populate later idk
+    this.oppositeRoad = null;
     this.lanes = [];
     this.lanesNumber = null;
     this.update();
@@ -1169,6 +1215,8 @@ Road = (function() {
     var side1, side2, turnNumber;
     // If we comment this if a lot of errors go away...
     if (this.target !== other.source) {
+      console.log(this.target);
+      console.log(other.source);
       throw Error('invalid roads');
     }
     //Mario - Reverse engineering comments
@@ -1409,7 +1457,7 @@ Trajectory = (function() {
       this._finishChangingLanes();
     }
     //Mario - When picking next lane you already know the road to take (invariant) so you merely need to consider all OPEN lanes in said road.
-    if (this.car.nextLane.isClosed || (this.current.lane && !this.isChangingLanes && !this.car.nextLane)) {
+    if ((this.car.nextLane && this.car.nextLane.isClosed) || (this.current.lane && !this.isChangingLanes && !this.car.nextLane)) {
       return this.car.pickNextLane();
     }
   };
@@ -1430,6 +1478,7 @@ Trajectory = (function() {
     }
     nextPosition = this.current.position + 3 * this.car.length;
     if (!(nextPosition < this.lane.length)) {
+      console.log(this.car);
       throw Error('too late to change lane');
     }
     return this._startChangingLanes(nextLane, nextPosition);
@@ -1616,7 +1665,7 @@ World = (function() {
   };
 
   World.prototype.generateMap = function(minX, maxX, minY, maxY) {
-    var gridSize, intersection, intersectionsNumber, map, previous, rect, step, x, y, _i, _j, _k, _l;
+    var gridSize, intersection, intersectionsNumber, map, previous, rect, step, x, y, _i, _j, _k, _l, road1, road2;
     if (minX == null) {
       minX = -2;
     }
@@ -1652,10 +1701,14 @@ World = (function() {
         if (intersection != null) {
           if (random() < 0.9) {
             if (previous != null) {
-              this.addRoad(new Road(intersection, previous));
-            }
-            if (previous != null) {
-              this.addRoad(new Road(previous, intersection));
+              road1 = new Road(intersection, previous);
+              road2 = new Road(previous, intersection);
+
+              road1.oppositeRoad = road2;
+              road2.oppositeRoad = road1;
+
+              this.addRoad(road1);
+              this.addRoad(road2);
             }
           }
           previous = intersection;
@@ -1669,10 +1722,14 @@ World = (function() {
         if (intersection != null) {
           if (random() < 0.9) {
             if (previous != null) {
-              this.addRoad(new Road(intersection, previous));
-            }
-            if (previous != null) {
-              this.addRoad(new Road(previous, intersection));
+              road1 = new Road(intersection, previous);
+              road2 = new Road(previous, intersection);
+
+              road1.oppositeRoad = road2;
+              road2.oppositeRoad = road1;
+
+              this.addRoad(road1);
+              this.addRoad(road2);
             }
           }
           previous = intersection;
@@ -1691,34 +1748,20 @@ World = (function() {
     road = _refroads[id];
     // This reduces a lane in one direction
     removed_lane = road.leftmostLane; // Equivalent to road.lanes[road.lanesNumbers - 1]
-    road.lanesNumber -= 1;
-    road.lanes = road.lanes.slice(0,road.lanesNumber);
-    road.update(road.lanesNumber);
+    removed_lane.isClosed = true;
 
     // Search for the road next to the current road
-    // Mario: we should make an opposite road property for each road that lets us NOT have to search each time. 
-    for (id in _refroads){
-      x = _refroads[id]
-      if (x.source.id == road.target.id && x.target.id == road.source.id){
-        next_road = x;
-      }
-    }
-    // This adds a lane in the other direction
-    new_lanes = next_road.lanes;
-    // Change the direction and other attributes to make it go in the other direction
-    removed_lane.direction += Math.PI;
-    removed_lane.road = next_road;
-//    removed_lane.sourceSegment, removed_lane.targetSegment = removed_lane.targetSegment, removed_lane.sourceSegment;
-
-    new_lanes.unshift(removed_lane); // Add removed_lane at [0], i.e., rightmostLane
-    next_road.lanes = new_lanes;
-    // next_road.rightmostLane = removed_lane;
-    next_road.lanesNumber += 1;
-    next_road.update(next_road.lanesNumber);
-
-    console.log(road);
-    console.log(next_road);
-
+    // Mario: we should make an opposite road property for each road that lets us NOT have to search each time.
+//    for (id in _refroads){
+//      x = _refroads[id]
+//      if (x.source.id == road.target.id && x.target.id == road.source.id){
+//        next_road = x;
+//        next_road.oppositeRoad = road;
+//        road.oppositeRoad = next_road;
+//
+//        break;
+//      }
+//    }
   };
 
   // Comment-David
@@ -2390,7 +2433,11 @@ ToolRoadBuilder = (function(_super) {
         return this.dualRoad.source = hoveredIntersection;
       } else {
         this.road = new Road(this.sourceIntersection, hoveredIntersection);
-        return this.dualRoad = new Road(hoveredIntersection, this.sourceIntersection);
+        this.dualRoad = new Road(hoveredIntersection, this.sourceIntersection);
+        this.road.oppositeRoad = this.dualRoad;
+        this.dualRoad.oppositeRoad = this.road;
+
+        return this.dualRoad;
       }
     } else {
       return this.road = this.dualRoad = null;
@@ -2567,7 +2614,7 @@ Visualizer = (function() {
   }
 
   Visualizer.prototype.drawIntersection = function(intersection, alpha) {
-    var color;
+    var color, text;
     color = intersection.color || settings.colors.intersection;
     this.graphics.drawRect(intersection.rect);
     this.ctx.lineWidth = 0.4;
