@@ -1156,8 +1156,12 @@ Road = (function() {
     if (this.target !== other.source) {
       throw Error('invalid roads');
     }
-    side1 = this.targetSideId;
-    side2 = other.sourceSideId;
+    //Mario - Reverse engineering comments
+    
+    //Side is an id assigned to the square representing the intersection.
+    // 0 - Up, 1 - Right, 2 - Down, 3 - Left
+    side1 = this.targetSideId; //The side of the intersection I am currently facing.
+    side2 = other.sourceSideId; //The side of the intersection I want to head torwards. (Road to take already decided)
     // % This funciton gets the face of the current intersection and the face of the next intersection and tells you whether when you get to the intersection:
     // 0 - You will go left
     // 1 - You will go straight ahead
@@ -1392,7 +1396,7 @@ Trajectory = (function() {
     //Mario - When picking next lane you already know the road to take (invariant) so you merely need to consider all OPEN lanes in said road.
     if (this.car.nextLane.isClosed || (this.current.lane && !this.isChangingLanes && !this.car.nextLane)) {
       return this.car.pickNextLane();
-    }//test
+    }
   };
 
   Trajectory.prototype.changeLane = function(nextLane) {
