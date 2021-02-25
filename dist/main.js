@@ -920,7 +920,7 @@ Lane = (function() {
     this.leftmostAdjacent = null;
     this.rightmostAdjacent = null;
     this.isClosed = false;
-    this.carsPositions = {};
+    this.carsPositions = [];//Mario: It was an object, changed to array so we can access length (hope nothing breaks)
     this.update();
   }
 
@@ -971,6 +971,21 @@ Lane = (function() {
     this.middleLine = new Segment(this.sourceSegment.center, this.targetSegment.center);
     this.length = this.middleLine.length;
     return this.direction = this.middleLine.direction;
+  };
+
+  //Mario: Tries to open the lane if it is closed
+  //Incomplete function, TODO
+  Lane.prototype.tryOpen = function() {
+    if (this.isClosed == false) {
+      throw Error('Lane is already open.');
+    }
+    if (this.carPositions.length === 0)//If it is finally empty, we can proceed with 
+    {
+      //SWAP NEEDED HERE
+      this.isClosed = false;
+      return true;
+    }
+    return false;
   };
 
   Lane.prototype.getTurnDirection = function(other) {
@@ -1158,7 +1173,7 @@ Road = (function() {
     }
     //Mario - Reverse engineering comments
     
-    //Side is an id assigned to the square representing the intersection.
+    //Side is an id assigned to each face of the square representing the intersection.
     // 0 - Up, 1 - Right, 2 - Down, 3 - Left
     side1 = this.targetSideId; //The side of the intersection I am currently facing.
     side2 = other.sourceSideId; //The side of the intersection I want to head torwards. (Road to take already decided)
@@ -1681,6 +1696,7 @@ World = (function() {
     road.update(road.lanesNumber);
 
     // Search for the road next to the current road
+    // Mario: we should make an opposite road property for each road that lets us NOT have to search each time. 
     for (id in _refroads){
       x = _refroads[id]
       if (x.source.id == road.target.id && x.target.id == road.source.id){
