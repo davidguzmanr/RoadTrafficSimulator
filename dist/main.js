@@ -1392,7 +1392,7 @@ Trajectory = (function() {
     //Mario - When picking next lane you already know the road to take (invariant) so you merely need to consider all OPEN lanes in said road.
     if (this.car.nextLane.isClosed || (this.current.lane && !this.isChangingLanes && !this.car.nextLane)) {
       return this.car.pickNextLane();
-    }
+    }//test
   };
 
   Trajectory.prototype.changeLane = function(nextLane) {
