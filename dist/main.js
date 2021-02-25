@@ -919,6 +919,7 @@ Lane = (function() {
     this.rightAdjacent = null;
     this.leftmostAdjacent = null;
     this.rightmostAdjacent = null;
+    this.isClosed = false;
     this.carsPositions = {};
     this.update();
   }
@@ -1157,7 +1158,10 @@ Road = (function() {
     }
     side1 = this.targetSideId;
     side2 = other.sourceSideId;
-    // % 4 is because there were 4 lanes in the original?
+    // % This funciton gets the face of the current intersection and the face of the next intersection and tells you whether when you get to the intersection:
+    // 0 - You will go left
+    // 1 - You will go straight ahead
+    // 2 - You will go right
     return turnNumber = (side2 - side1 - 1 + 8) % 4;
   };
 
@@ -1385,7 +1389,8 @@ Trajectory = (function() {
     if (this.isChangingLanes && tempRelativePosition >= 1) {
       this._finishChangingLanes();
     }
-    if (this.current.lane && !this.isChangingLanes && !this.car.nextLane) {
+    //Mario - When picking next lane you already know the road to take (invariant) so you merely need to consider all OPEN lanes in said road.
+    if (this.car.nextLane.isClosed || (this.current.lane && !this.isChangingLanes && !this.car.nextLane)) {
       return this.car.pickNextLane();
     }
   };
