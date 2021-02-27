@@ -1080,7 +1080,6 @@ Lane = (function() {
   };
 
   //Mario: Tries to open the lane if it is closed
-  //Incomplete function, TODO
   Lane.prototype.tryOpen = function() {
     var road, next_road, new_lanes;
     road = this.road;
@@ -1137,10 +1136,16 @@ Lane = (function() {
   };
 
   Lane.prototype.removeCar = function(carPosition) {
+    var ret;
     if (!(carPosition.id in this.carsPositions)) {
       throw Error('removing unknown car');
     }
-    return delete this.carsPositions[carPosition.id];
+    ret = delete this.carsPositions[carPosition.id];
+    if(this.carsPositions.length === 0)
+    {
+      this.tryOpen();
+    }
+    return ret;
   };
 
   Lane.prototype.getNext = function(carPosition) {
