@@ -551,12 +551,91 @@ Car = (function() {
   };
 
   Car.prototype.move = function(delta) {
-    var acceleration, currentLane, preferedLane, step, turnNumber;
+    var acceleration, currentLane, preferedLane, step, turnNumber, currentRoad, nextRoad, lane, laneNumber, R;
     acceleration = this.getAcceleration();
     this.speed += acceleration * delta;
     if (!this.trajectory.isChangingLanes && this.nextLane) {
       currentLane = this.trajectory.current.lane;
-      turnNumber = currentLane.getTurnDirection(this.nextLane);
+      currentRoad = this.trajectory.current.lane.road;
+      if (currentLane.road.target !== this.nextLane.road.source)//If the lane you were going towards changed direction
+      {
+        currentRoad = currentLane.road;
+        nextRoad = this.nextLane.road.oppositeRoad;
+
+        if(currentRoad.target !== nextRoad.source)
+        {
+          currentRoad = currentLane.road.oppositeRoad;
+          nextRoad = this.nextLane.road;
+        }
+        turnNumber = currentRoad.getTurnDirection(nextRoad);
+        //Try and open
+        for (lane in nextRoad.lanes){
+          nextRoad.lanes[lane].tryOpen();
+        }
+        //Try and open
+        for (lane in nextRoad.oppositeRoad.lanes){
+          nextRoad.oppositeRoad.lanes[lane].tryOpen();
+        }
+        laneNumber = (function() {
+          switch (turnNumber) {
+            case 0:
+              R = nextRoad.lanesNumber - 1;
+              while(nextRoad.lanes[R].isClosed){
+                R -= 1;
+              }
+            case 1:
+              R = _.random(0, nextRoad.lanesNumber - 1);
+              while(nextRoad.lanes[R].isClosed){
+                R = _.random(0, nextRoad.lanesNumber - 1);
+              }
+            case 2:
+              R = 0;
+              while(nextRoad.lanes[R].isClosed){
+                R += 1;
+              }
+          }
+        })();
+        this.nextLane = nextRoad.lanes[R];
+        this.trajectory.nextLane = nextRoad.lanes[R];
+      } else if(this.nextLane.isClosed)//IDK if this will happen, just covering my bases.
+      {
+        currentRoad = this.trajectory.current.lane.road;
+        nextRoad = this.nextLane.road;
+        turnNumber = currentRoad.getTurnDirection(nextRoad);
+        //Try and open
+        for (lane in nextRoad.lanes){
+          nextRoad.lanes[lane].tryOpen();
+        }
+        //Try and open
+        for (lane in nextRoad.oppositeRoad.lanes){
+          nextRoad.oppositeRoad.lanes[lane].tryOpen();
+        }
+        laneNumber = (function() {
+          switch (turnNumber) {
+            case 0:
+              R = nextRoad.lanesNumber - 1;
+              while(nextRoad.lanes[R].isClosed){
+                R -= 1;
+              }
+            case 1:
+              R = _.random(0, nextRoad.lanesNumber - 1);
+              while(nextRoad.lanes[R].isClosed){
+                R = _.random(0, nextRoad.lanesNumber - 1);
+              }
+            case 2:
+              R = 0;
+              while(nextRoad.lanes[R].isClosed){
+                R += 1;
+              }
+          }
+        })();
+        this.nextLane = nextRoad.lanes[R];
+        this.trajectory.nextLane = nextRoad.lanes[R];
+      }
+      else
+      {
+        turnNumber = currentLane.getTurnDirection(this.nextLane);
+      }
       preferedLane = (function() {
         switch (turnNumber) {
           case 0:
@@ -608,15 +687,18 @@ Car = (function() {
       return null;
     }
 
+    //Calculate turn direction (which road to go to)
+    turnNumber = this.trajectory.current.lane.road.getTurnDirection(nextRoad);
+
+    //Try and open
     for (lane in nextRoad.lanes){
       nextRoad.lanes[lane].tryOpen();
     }
-
+    //Try and open
     for (lane in nextRoad.oppositeRoad.lanes){
       nextRoad.oppositeRoad.lanes[lane].tryOpen();
     }
 
-    turnNumber = this.trajectory.current.lane.road.getTurnDirection(nextRoad);
     laneNumber = (function() {
       switch (turnNumber) {
         case 0:
@@ -942,6 +1024,7 @@ Lane = (function() {
     this.leftmostAdjacent = null;
     this.rightmostAdjacent = null;
     this.isClosed = false;
+    this.isChanged = false;
     //Mario: It was an object, changed to array so we can access length (hope nothing breaks)
     this.carsPositions = [];
     this.update();
@@ -1026,7 +1109,9 @@ Lane = (function() {
       next_road.lanesNumber += 1;
       next_road.update(next_road.lanesNumber);
 
+      this.isChanged = true;//For debug purposes, no real logic behind it.
       this.isClosed = false;
+      console.log('LANE OPENED');
       return true;
     }
     return false;
@@ -1215,6 +1300,7 @@ Road = (function() {
     var side1, side2, turnNumber;
     // If we comment this if a lot of errors go away...
     if (this.target !== other.source) {
+      console.log()
       console.log(this.target);
       console.log(other.source);
       throw Error('invalid roads');
@@ -1387,13 +1473,29 @@ Trajectory = (function() {
   });
 
   Trajectory.prototype.isValidTurn = function() {
-    var nextLane, sourceLane, turnNumber;
+    var nextLane, sourceLane, turnNumber, currentRoad, nextRoad;
     nextLane = this.car.nextLane;
     sourceLane = this.current.lane;
     if (!nextLane) {
       throw Error('no road to enter');
     }
-    turnNumber = sourceLane.getTurnDirection(nextLane);
+    //Mario - Pesky error fixes
+    if (sourceLane.road.target !== nextLane.road.source)//Gotta fix roads before calculating turnNumber, design failure by the original author.
+    {
+        currentRoad = sourceLane.road;
+        nextRoad = nextLane.road.oppositeRoad;
+
+        if(currentRoad.target !== nextRoad.source)
+        {
+          currentRoad = sourceLane.road.oppositeRoad;
+          nextRoad = nextLane.road;
+        }
+        turnNumber = currentRoad.getTurnDirection(nextRoad);
+    }else
+    {
+      turnNumber = sourceLane.getTurnDirection(nextLane);
+    }
+    
     if (turnNumber === 3) {
       throw Error('no U-turns are allowed');
     }
@@ -1407,14 +1509,63 @@ Trajectory = (function() {
   };
 
   Trajectory.prototype.canEnterIntersection = function() {
-    var intersection, nextLane, sideId, sourceLane, turnNumber;
+    var intersection, nextLane, sideId, sourceLane, turnNumber, currentRoad, nextRoad, lane, laneNumber, R;
     nextLane = this.car.nextLane;
     sourceLane = this.current.lane;
     if (!nextLane) {
       return true;
     }
     intersection = this.nextIntersection;
-    turnNumber = sourceLane.getTurnDirection(nextLane);
+    if(sourceLane.road.target !== nextLane.road.source)//AKA 'invalid roads' error in getTurnDirection (nextLane or sourcelane changed direction since you picked it)
+    {
+      
+      currentRoad = sourceLane.road;
+      nextRoad = nextLane.road.oppositeRoad;
+
+      if(currentRoad.target !== nextRoad.source)
+      {
+        currentRoad = sourceLane.road.oppositeRoad;
+        nextRoad = nextLane.road;
+      }
+
+      turnNumber = currentRoad.getTurnDirection(nextRoad);
+
+      //This is unnecessary most likely. TODO: Check if this is better removed off this function.
+      //Try and open
+      for (lane in nextRoad.lanes){
+        nextRoad.lanes[lane].tryOpen();
+      }
+      //Try and open
+      for (lane in nextRoad.oppositeRoad.lanes){
+        nextRoad.oppositeRoad.lanes[lane].tryOpen();
+      }
+      
+      laneNumber = (function() {
+        switch (turnNumber) {
+          case 0:
+            R = nextRoad.lanesNumber - 1;
+            while(nextRoad.lanes[R].isClosed){
+              R -= 1;
+            }
+          case 1:
+            R = _.random(0, nextRoad.lanesNumber - 1);
+            while(nextRoad.lanes[R].isClosed){
+              R = _.random(0, nextRoad.lanesNumber - 1);
+            }
+          case 2:
+            R = 0;
+            while(nextRoad.lanes[R].isClosed){
+              R += 1;
+            }
+        }
+      })();
+
+      nextLane = nextRoad.lanes[R];
+      this.car.nextLane = nextRoad.lanes[R];
+    }else
+    {
+      turnNumber = sourceLane.getTurnDirection(nextLane);
+    }
     sideId = sourceLane.road.targetSideId;
     return intersection.controlSignals.state[sideId][turnNumber];
   };
@@ -1477,10 +1628,11 @@ Trajectory = (function() {
       throw Error('not neighbouring lanes');
     }
     nextPosition = this.current.position + 3 * this.car.length;
-    if (!(nextPosition < this.lane.length)) {
-      console.log(this.car);
-      throw Error('too late to change lane');
-    }
+    //TODO: What to do here?
+    // if (!(nextPosition < this.lane.length)) { //Commenting for now
+    //   console.log(this.car);
+    //   throw Error('too late to change lane');
+    // }
     return this._startChangingLanes(nextLane, nextPosition);
   };
 
@@ -1748,6 +1900,7 @@ World = (function() {
     road = _refroads[id];
     // This reduces a lane in one direction
     removed_lane = road.leftmostLane; // Equivalent to road.lanes[road.lanesNumbers - 1]
+    console.log('LANE CLOSED');
     removed_lane.isClosed = true;
 
     // Search for the road next to the current road
