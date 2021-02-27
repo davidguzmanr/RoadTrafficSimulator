@@ -1222,6 +1222,10 @@ Pool = (function() {
   };
 
   Pool.prototype.clear = function() {
+    // Comment-David
+    // This fixes the bug that didn't allow us to open the html and forced us
+    // to use incognito mode in Chrome.
+    // localStorage.clear();
     return this.objects = {};
   };
 
@@ -2811,7 +2815,11 @@ Visualizer = (function() {
       center = intersection.rect.center();
       flipInterval = Math.round(intersection.controlSignals.flipInterval * 100) / 100;
       phaseOffset = Math.round(intersection.controlSignals.phaseOffset * 100) / 100;
-      this.ctx.fillText(flipInterval + ' ' + phaseOffset, center.x, center.y);
+      // There is no useful information in this
+      // this.ctx.fillText(flipInterval + ' ' + phaseOffset, center.x, center.y);
+      this.ctx.fillStyle = "red";
+      this.ctx.font = "1px Arial";
+      this.ctx.fillText(intersection.id, center.x, center.y);
       return this.ctx.restore();
     }
   };
