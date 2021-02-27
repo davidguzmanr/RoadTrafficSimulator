@@ -2838,6 +2838,16 @@ Visualizer = (function() {
     this.ctx.restore();
     this.graphics.polyline(sourceSide.source, sourceSide.target, targetSide.source, targetSide.target);
     this.graphics.fill(settings.colors.road, alpha);
+    //Mario: Draw closed lanes as RED
+    for(_i in road.lanes)
+    {
+      lane = road.lanes[_i];
+      if(lane.isClosed)
+      {
+        this.graphics.polyline(lane.sourceSegment.source, lane.sourceSegment.target, lane.targetSegment.source, lane.targetSegment.target);
+        this.graphics.fill('red', 0.2);
+      }
+    }
     this.ctx.save();
     _ref = road.lanes.slice(1, road.lanes.length);
 //    console.log(_ref);
@@ -2854,6 +2864,7 @@ Visualizer = (function() {
     this.ctx.restore();
     // Comment-David
     // This add the road-id to the debug feature
+    
     if (this.debug) {
       this.ctx.save();
       this.ctx.fillStyle = "red";
