@@ -568,14 +568,7 @@ Car = (function() {
           nextRoad = this.nextLane.road;
         }
         turnNumber = currentRoad.getTurnDirection(nextRoad);
-        //Try and open
-        for (lane in nextRoad.lanes){
-          nextRoad.lanes[lane].tryOpen();
-        }
-        //Try and open
-        for (lane in nextRoad.oppositeRoad.lanes){
-          nextRoad.oppositeRoad.lanes[lane].tryOpen();
-        }
+
         laneNumber = (function() {
           switch (turnNumber) {
             case 0:
@@ -599,17 +592,9 @@ Car = (function() {
         this.trajectory.nextLane = nextRoad.lanes[R];
       } else if(this.nextLane.isClosed)//IDK if this will happen, just covering my bases.
       {
-        currentRoad = this.trajectory.current.lane.road;
         nextRoad = this.nextLane.road;
         turnNumber = currentRoad.getTurnDirection(nextRoad);
-        //Try and open
-        for (lane in nextRoad.lanes){
-          nextRoad.lanes[lane].tryOpen();
-        }
-        //Try and open
-        for (lane in nextRoad.oppositeRoad.lanes){
-          nextRoad.oppositeRoad.lanes[lane].tryOpen();
-        }
+
         laneNumber = (function() {
           switch (turnNumber) {
             case 0:
@@ -689,15 +674,6 @@ Car = (function() {
 
     //Calculate turn direction (which road to go to)
     turnNumber = this.trajectory.current.lane.road.getTurnDirection(nextRoad);
-
-    //Try and open
-    for (lane in nextRoad.lanes){
-      nextRoad.lanes[lane].tryOpen();
-    }
-    //Try and open
-    for (lane in nextRoad.oppositeRoad.lanes){
-      nextRoad.oppositeRoad.lanes[lane].tryOpen();
-    }
 
     laneNumber = (function() {
       switch (turnNumber) {
@@ -1025,6 +1001,7 @@ Lane = (function() {
     this.rightmostAdjacent = null;
     this.isClosed = false;
     this.isChanged = false;
+    this.carsDependent = 0;
     //Mario: It was an object, changed to array so we can access length (hope nothing breaks)
     this.carsPositions = [];
     this.update();
@@ -1087,7 +1064,7 @@ Lane = (function() {
       return true;
     }
 
-    if (this.carsPositions.length === 0) //If it is finally empty, we can proceed with
+    if (this.carsDependent == 0) //If it is finally empty, we can proceed with
     {
       road.lanesNumber -= 1;
       road.lanes = road.lanes.slice(0,road.lanesNumber);
@@ -1141,10 +1118,7 @@ Lane = (function() {
       throw Error('removing unknown car');
     }
     ret = delete this.carsPositions[carPosition.id];
-    if(this.carsPositions.length === 0)
-    {
-      this.tryOpen();
-    }
+    this.tryOpen();
     return ret;
   };
 
@@ -1408,6 +1382,7 @@ Trajectory = (function() {
     }
     this.current = new LanePosition(this.car, lane, position);
     this.current.acquire();
+    this.current.lane.carsDependent += 1;
     this.next = new LanePosition(this.car);
     this.temp = new LanePosition(this.car);
     this.isChangingLanes = false;
@@ -1539,16 +1514,6 @@ Trajectory = (function() {
 
       turnNumber = currentRoad.getTurnDirection(nextRoad);
 
-      //This is unnecessary most likely. TODO: Check if this is better removed off this function.
-      //Try and open
-      for (lane in nextRoad.lanes){
-        nextRoad.lanes[lane].tryOpen();
-      }
-      //Try and open
-      for (lane in nextRoad.oppositeRoad.lanes){
-        nextRoad.oppositeRoad.lanes[lane].tryOpen();
-      }
-      
       laneNumber = (function() {
         switch (turnNumber) {
           case 0:
@@ -1685,7 +1650,10 @@ Trajectory = (function() {
       throw Error('no lane changing is going on');
     }
     this.isChangingLanes = false;
+    this.current.lane.carsDependent -= 1;
+    this.current.lane.tryOpen();
     this.current.lane = this.next.lane;
+    this.current.lane.carsDependent += 1;
     this.current.position = this.next.position || 0;
     this.current.acquire();
     this.next.lane = null;
@@ -1911,7 +1879,7 @@ World = (function() {
     removed_lane = road.leftmostLane; // Equivalent to road.lanes[road.lanesNumbers - 1]
     console.log('LANE CLOSED');
     removed_lane.isClosed = true;
-
+    removed_lane.tryOpen();
     // Search for the road next to the current road
     // Mario: we should make an opposite road property for each road that lets us NOT have to search each time.
 //    for (id in _refroads){
@@ -1960,6 +1928,7 @@ World = (function() {
       car = _ref1[id];
       car.move(delta);
       if (!car.alive) {
+        car.trajectory.current.lane.carsDependent -= 1;
         _results.push(this.removeCar(car));
       } else {
         _results.push(void 0);
