@@ -25,5 +25,4 @@ And open `index.html` in your browser. Use **gulp** to rebuild project. See [How
 and [How to install Gulp](https://tecadmin.net/install-gulp-js-on-ubuntu/) to install the necessary in Ubuntu.
 
 # References
-The original is in [volkhin](https://github.com/volkhin/RoadTrafficSimulator), I am just making changes to it 
-for my needs.
+The original is in [volkhin](https://github.com/volkhin/RoadTrafficSimulator), we are just making changes to it for our needs.

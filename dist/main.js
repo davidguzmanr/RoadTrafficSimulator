@@ -2794,7 +2794,8 @@ Visualizer = (function() {
   };
 
   Visualizer.prototype.drawRoad = function(road, car, alpha) {
-    var dashSize, lane, leftLine, line, rightLine, middleLine, borders, sourceSide, targetSide, _i, _len, _ref, _refcars, id, car, flux;
+    var dashSize, lane, leftLine, line, rightLine, middleLine, borders, sourceSide, targetSide, _i, _len, _ref, _refcars, _refroads, id, car;
+    var flux, next_flux, flux_total, density, next_density, next_road, targetid, n_lanes, n_lanes_next, percentage;
     if ((road.source == null) || (road.target == null)) {
       throw Error('invalid road');
     }
@@ -2853,16 +2854,42 @@ Visualizer = (function() {
       this.ctx.font = "1px Arial";
       this.ctx.fillText(road.id, (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y) / 2);
 
+      // Find the road besides the current road
+      _refroads = this.world.roads.all();
+      for (_ref in _refroads){
+        if (_refroads[_ref].source.id == road.target.id && _refroads[_ref].target.id == road.source.id){
+          // console.log(_refroads[_ref], road);
+          next_road = _refroads[_ref];
+        }
+      }
+
       // This will measure the flux in each road, it will be useful when making the decision of adding more lanes
       flux = 0;
+      next_flux = 0;
       _refcars = this.world.cars.all();
       for (id in _refcars){
         car = _refcars[id];
+
         if (car.trajectory.current._lane.road.id == road.id){
           flux += 1;
         }
+
+        if (car.trajectory.current._lane.road.id == next_road.id){
+          next_flux += 1;
+        }
       }
-      this.ctx.fillText("# cars: " + flux, (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y + 2) / 2);
+
+      // This will measure the density according to equations (2) and (3)
+      // from https://www.researchgate.net/publication/348225622_Modeling_adaptive_reversible_lanes_A_cellular_automata_approach
+      flux_total = flux + next_flux;
+      percentage = flux/flux_total
+      n_lanes = road.lanesNumber;
+      n_lanes_next = next_road.lanesNumber;
+
+      density = (n_lanes_next/n_lanes) * (percentage) / (1 - percentage);
+      density = Math.max(0, density)
+
+      this.ctx.fillText("ρ=" + density.toFixed(3), (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y + 2) / 2);
       return this.ctx.restore();
     }
   };
