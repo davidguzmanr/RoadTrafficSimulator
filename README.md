@@ -21,7 +21,8 @@ To run simulator
     cd RoadTrafficSimulator
     npm install
 
-And open `index.html` in your browser. Use **gulp** to rebuild project. 
+And open `index.html` in your browser. Use **gulp** to rebuild project. See [How to install NodeJS](https://www.digitalocean.com/community/tutorials/como-instalar-node-js-en-ubuntu-18-04-es)
+and [How to install Gulp](https://tecadmin.net/install-gulp-js-on-ubuntu/) to install the necessary in Ubuntu.
 
 # References
 The original is in [volkhin](https://github.com/volkhin/RoadTrafficSimulator), I am just making changes to it 
