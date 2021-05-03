@@ -1199,7 +1199,7 @@ Pool = (function() {
     // Comment-David
     // This fixes the bug that didn't allow us to open the html and forced us
     // to use incognito mode in Chrome.
-    // localStorage.clear();
+    localStorage.clear();
     return this.objects = {};
   };
 
@@ -2867,6 +2867,8 @@ Visualizer = (function() {
       flux = 0;
       next_flux = 0;
       _refcars = this.world.cars.all();
+
+      // Count the number of cars in each road
       for (id in _refcars){
         car = _refcars[id];
 
@@ -2880,14 +2882,25 @@ Visualizer = (function() {
       }
 
       // This will measure the density according to equations (2) and (3)
-      // from https://www.researchgate.net/publication/348225622_Modeling_adaptive_reversible_lanes_A_cellular_automata_approach
+      // from https://www.researchgate.net/publication/348225622_Modeling_adaptive_reversible_lanes_A_cellular_automata_approach,
+      // we are taking rho = 1
       flux_total = flux + next_flux;
       percentage = flux/flux_total
       n_lanes = road.lanesNumber;
       n_lanes_next = next_road.lanesNumber;
 
       density = (n_lanes_next/n_lanes) * (percentage) / (1 - percentage);
-      density = Math.max(0, density)
+
+      // It happens when one road has cars and the next road is empty, in that case it is better
+      // to define it as one
+      if (density == Infinity){
+        density = 1;
+      }
+
+      // The road is empty
+      if (isNaN(density)){
+        density = 0;
+      }
 
       this.ctx.fillText("ρ=" + density.toFixed(3), (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y + 2) / 2);
       return this.ctx.restore();
