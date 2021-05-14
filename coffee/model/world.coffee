@@ -84,6 +84,25 @@ class World
           previous = intersection
     null
 
+  changeNumberofLanes: ->
+    _refroads = @roads.all()
+
+    # Comment-David: pick a random road to change number of lanes
+    id = _.sample(@roads.all()).id
+    road = _refroads[id]
+
+    # Comment-David: this reduces a lane in one direction
+    removed_lane = road.leftmostLane  # equivalent to road.lanes[road.lanesNumbers - 1]
+    console.log('LANE CLOSED')
+    removed_lane.isClosed = true
+    removed_lane.tryOpen();
+
+    return
+
+  # Comment-David: function to stop the traffic in a road
+  # Not implemented yet
+  StopRoad: ->
+    return
 
   clear: ->
     @set {}
@@ -136,5 +155,50 @@ class World
     car = _.sample @cars.all()
     if car?
       @removeCar car
+
+  # Comment-David: the next functions will try to create traffic in a certain directions
+  addCarEast: ->
+    flag = true
+    while flag
+      road = _.sample(@roads.all())
+      if road != null
+        lane = _.sample(road.lanes)
+        if lane != null and lane.direction == 0
+          flag = false
+          @carsNumber += 1
+          return @addCar new Car lane
+
+  addCarWest: ->
+    flag = true
+    while flag
+      road = _.sample(@roads.all())
+      if road != null
+        lane = _.sample(road.lanes)
+        if lane != null and lane.direction == Math.PI
+          flag = false
+          @carsNumber += 1
+          return @addCar new Car lane
+
+  addCarNorth: ->
+    flag = true
+    while flag
+      road = _.sample(@roads.all())
+      if road != null
+        lane = _.sample(road.lanes)
+        if lane != null and lane.direction == -Math.PI / 2
+          flag = false
+          @carsNumber += 1
+          return @addCar new Car lane
+
+  addCarSouth: ->
+    flag = true
+    while flag
+      road = _.sample(@roads.all())
+      if road != null
+        lane = _.sample(road.lanes)
+        if lane != null and lane.direction == Math.PI / 2
+          flag = false
+          @carsNumber += 1
+          return @addCar new Car lane
 
 module.exports = World

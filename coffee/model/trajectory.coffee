@@ -11,6 +11,7 @@ class Trajectory
     position ?= 0
     @current = new LanePosition @car, lane, position
     @current.acquire()
+    @current.lane.carsDependent += 1
     @next = new LanePosition @car
     @temp = new LanePosition @car
     @isChangingLanes = false

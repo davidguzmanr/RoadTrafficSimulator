@@ -3,23 +3,64 @@
 {max, min, random, sqrt} = Math
 require '../helpers'
 _ = require 'underscore'
+settings = require '../settings'
 Trajectory = require './trajectory'
 
 class Car
   constructor: (lane, position) ->
-    @id = _.uniqueId 'car'
-    @color = (300 + 240 * random() | 0) % 360
-    @_speed = 0
-    @width = 1.7
-    @length = 3 + 2 * random()
-    @maxSpeed = 30
-    @s0 = 2
-    @timeHeadway = 1.5
-    @maxAcceleration = 1
-    @maxDeceleration = 3
-    @trajectory = new Trajectory this, lane, position
-    @alive = true
-    @preferedLane = null
+
+    # Comment-David: we will add the vehicles in this proportion: cars-80%, buses-15%, bikes-5%.
+    # Cars will be different colors, buses will be green and bikes red/orange. They will have different dimensions
+    type_of_car = random()
+    total_prob = settings.probCar + settings.probBus + settings.probBike
+    vehicle_probability_dist = [settings.probCar/total_prob, settings.probBus/total_prob, settings.probBike/total_prob]
+
+    if type_of_car < vehicle_probability_dist[0]
+      @id = _.uniqueId 'car'
+      @color = (300 + 240 * random() | 0) % 360
+      @_speed = 0
+      @width = 1.7
+      @length = 3 + 2 * random()
+      @maxSpeed = 30
+      @s0 = 2
+      @timeHeadway = 1.5
+      @maxAcceleration = 1
+      @maxDeceleration = 3
+      @trajectory = new Trajectory this, lane, position
+      @alive = true
+      @preferedLane = null
+
+    else if type_of_car > vehicle_probability_dist[0] and type_of_car < vehicle_probability_dist[1]
+      @id = _.uniqueId 'car'
+      @color = (100  | 0) % 360
+      @_speed = 0
+      @width = 2.0
+      @length = 8.0
+      # Buses will be slower than the cars
+      @maxSpeed = 20
+      @s0 = 2
+      @timeHeadway = 1.5
+      @maxAcceleration = 0.75
+      @maxDeceleration = 2
+      @trajectory = new Trajectory this, lane, position
+      @alive = true
+      @preferedLane = null
+
+    else
+      @id = _.uniqueId 'car'
+      @color = (10  | 0) % 360
+      @_speed = 0
+      @width = 0.5
+      @length = 1.5
+      # Bikes will be the slowest
+      @maxSpeed = 5
+      @s0 = 2
+      @timeHeadway = 1.5
+      @maxAcceleration = 0.5
+      @maxDeceleration = 1
+      @trajectory = new Trajectory this, lane, position
+      @alive = true
+      @preferedLane = null
 
   @property 'coords',
     get: -> @trajectory.coords

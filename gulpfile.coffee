@@ -44,14 +44,14 @@ gulp.task 'build', ->
 #     erasing all the changes I made after building, so is better
 #     to comment them for the moment
 
-#     .pipe source 'main.js'
-#     .pipe gulp.dest './dist/'
-#
-# gulp.task 'uglify', ['build'], ->
-#   gulp.src './dist/main.js'
-#     .pipe rename 'main.min.js'
-#     .pipe uglify()
-#     .pipe gulp.dest './dist/'
+    .pipe source 'main.js'
+    .pipe gulp.dest './dist/'
+
+gulp.task 'uglify', ['build'], ->
+  gulp.src './dist/main.js'
+    .pipe rename 'main.min.js'
+    .pipe uglify()
+    .pipe gulp.dest './dist/'
 
 gulp.task 'test', ->
   gulp.src './test/**/*-spec.coffee', read: false

@@ -95,8 +95,6 @@ class Visualizer
     sourceSide = road.sourceSide
     targetSide = road.targetSide
 
-    # Comment-David
-    # Write the road id in the middle of the road
     if @debug
       @ctx.save()
       @ctx.fillStyle = "red"
@@ -107,7 +105,7 @@ class Visualizer
     @ctx.lineWidth = 0.4
     leftLine = road.leftmostLane.leftBorder
     @graphics.drawSegment leftLine
-    @graphics.stroke settings.colors.roadMarking
+    @graphics.stroke settings.colors.roadMiddleLane
 
     rightLine = road.rightmostLane.rightBorder
     @graphics.drawSegment rightLine
@@ -127,6 +125,58 @@ class Visualizer
       @ctx.lineDashOffset = 1.5 * dashSize
       @ctx.setLineDash [dashSize]
       @graphics.stroke settings.colors.roadMarking
+
+    # Comment-Mario: draw closed lanes as RED
+    # Falta completar lane.coffee
+
+    # Comment-David: This add the road-id and number of lanes to the debug feature
+    if @debug
+      @ctx.save()
+      @ctx.fillStyle = "red"
+      @ctx.font = "1px Arial"
+      @ctx.fillText(road.id, (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y) / 2);
+      @ctx.fillText("#lanes=" + road.lanesNumber, (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y) / 2 + 1)
+
+      # Find the road besides the current road
+      _refroads = @world.roads.all()
+
+      for _ref in Object.values(_refroads)
+        if _ref.source.id == road.target.id and _ref.target.id == road.source.id
+          next_road = _ref
+
+      # This will measure the flux in each road, it will be useful when making the decision of adding more lanes
+      flux = 0.0
+      next_flux = 0.0
+      _refcars = @world.cars.all()
+
+      # Count the number of cars in each road
+      for car in Object.values(_refcars)
+        if car.trajectory.current._lane.road.id == road.id
+          flux += 1
+
+        if car.trajectory.current._lane.road.id == next_road.id
+          next_flux += 1
+
+      # This will measure the density according to equations (2) and (3) from
+      # https://www.researchgate.net/publication/348225622_Modeling_adaptive_reversible_lanes_A_cellular_automata_approach,
+      # we are taking rho = 1
+
+      flux_total = flux + next_flux
+      percentage = flux/flux_total
+      n_lanes = 2
+      n_lanes_next = 2
+
+      density = (n_lanes_next/n_lanes) * (percentage) / (1 - percentage)
+
+      # It happens when one road has cars and the next road is empty, in that case it is better to define it as one
+      if density == Infinity
+        density = 1
+      # The road is empty
+      if isNaN(density)
+        density = 0
+
+      @ctx.fillText("ρ=" + density.toFixed(3), (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y) / 2 + 2)
+
     @ctx.restore()
 
 

@@ -27,6 +27,11 @@ $ ->
   guiWorld.add world, 'load'
   guiWorld.add world, 'clear'
   guiWorld.add world, 'generateMap'
+  guiWorld.add world, 'addCarEast'
+  guiWorld.add world, 'addCarWest'
+  guiWorld.add world, 'addCarNorth'
+  guiWorld.add world, 'addCarSouth'
+  guiWorld.add world, 'changeNumberofLanes'
   guiVisualizer = gui.addFolder 'visualizer'
   guiVisualizer.open()
   guiVisualizer.add(visualizer, 'running').listen()

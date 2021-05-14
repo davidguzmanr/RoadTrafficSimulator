@@ -1,12 +1,14 @@
 (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);throw new Error("Cannot find module '"+o+"'")}var f=n[o]={exports:{}};t[o][0].call(f.exports,function(e){var n=t[o][1][e];return s(n?n:e)},f,f.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
 'use strict';
-var $, DAT, Visualizer, World, settings, _;
+var $, DAT, Visualizer, World, fs, settings, _;
 
 require('./helpers');
 
 $ = require('jquery');
 
 _ = require('underscore');
+
+fs = require('fs');
 
 Visualizer = require('./visualizer/visualizer');
 
@@ -16,22 +18,8 @@ World = require('./model/world');
 
 settings = require('./settings');
 
-// Save file
-//fs = require('fs');
-//
-//fs.writeFile("/test", "Hey there!", function(err) {
-//    if(err) {
-//        return console.log(err);
-//    }
-//    console.log("The file was saved!");
-//});
-//
-//// Or
-//fs.writeFileSync('/test-sync', 'Hey there!');
-
-
 $(function() {
-  var canvas, gui, guiVisualizer, guiWorld, guiSettings;
+  var canvas, gui, guiVisualizer, guiWorld;
   canvas = $('<canvas />', {
     id: 'canvas'
   });
@@ -40,58 +28,41 @@ $(function() {
   world.load();
   if (world.intersections.length === 0) {
     world.generateMap();
-    world.carsNumber = 50;
+    world.carsNumber = 100;
   }
   window.visualizer = new Visualizer(world);
   visualizer.start();
   gui = new DAT.GUI();
-
   guiWorld = gui.addFolder('world');
   guiWorld.open();
   guiWorld.add(world, 'save');
   guiWorld.add(world, 'load');
   guiWorld.add(world, 'clear');
-//  guiWorld.add(world, 'removeRandomCar');
-//  guiWorld.add(world, 'addRandomCar');
+  guiWorld.add(world, 'generateMap');
   guiWorld.add(world, 'addCarEast');
   guiWorld.add(world, 'addCarWest');
   guiWorld.add(world, 'addCarNorth');
   guiWorld.add(world, 'addCarSouth');
-  guiWorld.add(world, 'generateMap');
   guiWorld.add(world, 'changeNumberofLanes');
-  guiWorld.add(world, 'StopRoad');
-  guiWorld.add(world, 'carsNumber').min(0).max(200).step(1).listen();
-  guiWorld.add(world, 'averageSpeed').step(0.00001).listen();
-
   guiVisualizer = gui.addFolder('visualizer');
   guiVisualizer.open();
   guiVisualizer.add(visualizer, 'running').listen();
   guiVisualizer.add(visualizer, 'debug').listen();
   guiVisualizer.add(visualizer.zoomer, 'scale', 0.1, 2).listen();
   guiVisualizer.add(visualizer, 'timeFactor', 0.1, 10).listen();
-
-  guiSettings = gui.addFolder('settings');
-  guiSettings.open();
-  guiSettings.add(settings, 'lightsFlipInterval', 0, 400, 0.01).listen();
-  guiSettings.add(settings, 'lanesNumber').min(2).max(10).step(1).listen();
-  guiSettings.add(settings, 'probCar').min(0).max(1).step(0.05).listen();
-  guiSettings.add(settings, 'probBus').min(0).max(1).step(0.05).listen();
-  guiSettings.add(settings, 'probBike').min(0).max(1).step(0.05).listen();
-
-  return gui;
+  guiWorld.add(world, 'carsNumber').min(0).max(200).step(1).listen();
+  guiWorld.add(world, 'instantSpeed').step(0.00001).listen();
+  return gui.add(settings, 'lightsFlipInterval', 0, 400, 0.01).listen();
 });
 
-},{"./helpers":6,"./model/world":15,"./settings":16,"./visualizer/visualizer":24,"dat-gui":27,"jquery":31,"underscore":32}],2:[function(require,module,exports){
+
+},{"./helpers":6,"./model/world":15,"./settings":16,"./visualizer/visualizer":24,"dat-gui":28,"fs":26,"jquery":32,"underscore":33}],2:[function(require,module,exports){
 'use strict';
 var Curve, Segment;
 
 require('../helpers');
 
 Segment = require('./segment');
-
-//console.log("Saving...");
-//var fs = require('fs');
-//console.log("End");
 
 Curve = (function() {
   function Curve(A, B, O, Q) {
@@ -339,7 +310,7 @@ Rect = (function() {
 module.exports = Rect;
 
 
-},{"../helpers":6,"./point":3,"./segment":5,"underscore":32}],5:[function(require,module,exports){
+},{"../helpers":6,"./point":3,"./segment":5,"underscore":33}],5:[function(require,module,exports){
 'use strict';
 var Segment;
 
@@ -422,39 +393,32 @@ Function.prototype.property = function(prop, desc) {
 };
 
 
-},{"../helpers":6}],7:[function(require,module,exports){
+},{}],7:[function(require,module,exports){
 'use strict';
-var Car, Trajectory, max, min, random, sqrt, _, type_of_car, settings, total_prob, vehicle_probability_dist;
-
-require('../helpers');
-
-settings = require('../settings');
-
-_ = require('underscore');
-
-Trajectory = require('./trajectory');
+var Car, Trajectory, max, min, random, settings, sqrt, _;
 
 max = Math.max, min = Math.min, random = Math.random, sqrt = Math.sqrt;
 
-// Comment-David
-// I will add the vehicles in this proportion: cars-80%, buses-15%, bikes-5%.
-// Cars will be different colors, buses will be green and bikes red/orange.
-// They will have different dimensions
+require('../helpers');
+
+_ = require('underscore');
+
+settings = require('../settings');
+
+Trajectory = require('./trajectory');
 
 Car = (function() {
   function Car(lane, position) {
+    var total_prob, type_of_car, vehicle_probability_dist;
     type_of_car = random();
     total_prob = settings.probCar + settings.probBus + settings.probBike;
-    vehicle_probability_dist = [settings.probCar/total_prob, settings.probBus/total_prob, settings.probBike/total_prob];
+    vehicle_probability_dist = [settings.probCar / total_prob, settings.probBus / total_prob, settings.probBike / total_prob];
     if (type_of_car < vehicle_probability_dist[0]) {
-      // console.log('Car');
       this.id = _.uniqueId('car');
-      // Cars will have different colors
       this.color = (300 + 240 * random() | 0) % 360;
       this._speed = 0;
-      this.width = 1.2;
-      // They will also have a fixed length
-      this.length = 3.5;
+      this.width = 1.7;
+      this.length = 3 + 2 * random();
       this.maxSpeed = 30;
       this.s0 = 2;
       this.timeHeadway = 1.5;
@@ -463,15 +427,12 @@ Car = (function() {
       this.trajectory = new Trajectory(this, lane, position);
       this.alive = true;
       this.preferedLane = null;
-    }
-    else if (type_of_car > vehicle_probability_dist[0] && type_of_car < vehicle_probability_dist[1]) {
-      // console.log('Bus');
+    } else if (type_of_car > vehicle_probability_dist[0] && type_of_car < vehicle_probability_dist[1]) {
       this.id = _.uniqueId('car');
-      this.color = (100  | 0) % 360;
+      this.color = (100 | 0) % 360;
       this._speed = 0;
       this.width = 2.0;
       this.length = 8.0;
-      // Buses will be slower than the cars
       this.maxSpeed = 20;
       this.s0 = 2;
       this.timeHeadway = 1.5;
@@ -480,15 +441,12 @@ Car = (function() {
       this.trajectory = new Trajectory(this, lane, position);
       this.alive = true;
       this.preferedLane = null;
-    }
-    else{
-      // console.log('Bike');
+    } else {
       this.id = _.uniqueId('car');
       this.color = (10 | 0) % 360;
       this._speed = 0;
       this.width = 0.5;
       this.length = 1.5;
-      // Bikes will be the slowest
       this.maxSpeed = 5;
       this.s0 = 2;
       this.timeHeadway = 1.5;
@@ -551,76 +509,12 @@ Car = (function() {
   };
 
   Car.prototype.move = function(delta) {
-    var acceleration, currentLane, preferedLane, step, turnNumber, currentRoad, nextRoad, lane, laneNumber, R;
+    var acceleration, currentLane, preferedLane, step, turnNumber;
     acceleration = this.getAcceleration();
     this.speed += acceleration * delta;
     if (!this.trajectory.isChangingLanes && this.nextLane) {
       currentLane = this.trajectory.current.lane;
-      currentRoad = this.trajectory.current.lane.road;
-      if (currentLane.road.target !== this.nextLane.road.source)//If the lane you were going towards changed direction
-      {
-        currentRoad = currentLane.road;
-        nextRoad = this.nextLane.road.oppositeRoad;
-
-        if(currentRoad.target !== nextRoad.source)
-        {
-          currentRoad = currentLane.road.oppositeRoad;
-          nextRoad = this.nextLane.road;
-        }
-        turnNumber = currentRoad.getTurnDirection(nextRoad);
-
-        laneNumber = (function() {
-          switch (turnNumber) {
-            case 0:
-              R = nextRoad.lanesNumber - 1;
-              while(nextRoad.lanes[R].isClosed){
-                R -= 1;
-              }
-            case 1:
-              R = _.random(0, nextRoad.lanesNumber - 1);
-              while(nextRoad.lanes[R].isClosed){
-                R = _.random(0, nextRoad.lanesNumber - 1);
-              }
-            case 2:
-              R = 0;
-              while(nextRoad.lanes[R].isClosed){
-                R += 1;
-              }
-          }
-        })();
-        this.nextLane = nextRoad.lanes[R];
-        this.trajectory.nextLane = nextRoad.lanes[R];
-      } else if(this.nextLane.isClosed)//IDK if this will happen, just covering my bases.
-      {
-        nextRoad = this.nextLane.road;
-        turnNumber = currentRoad.getTurnDirection(nextRoad);
-
-        laneNumber = (function() {
-          switch (turnNumber) {
-            case 0:
-              R = nextRoad.lanesNumber - 1;
-              while(nextRoad.lanes[R].isClosed){
-                R -= 1;
-              }
-            case 1:
-              R = _.random(0, nextRoad.lanesNumber - 1);
-              while(nextRoad.lanes[R].isClosed){
-                R = _.random(0, nextRoad.lanesNumber - 1);
-              }
-            case 2:
-              R = 0;
-              while(nextRoad.lanes[R].isClosed){
-                R += 1;
-              }
-          }
-        })();
-        this.nextLane = nextRoad.lanes[R];
-        this.trajectory.nextLane = nextRoad.lanes[R];
-      }
-      else
-      {
-        turnNumber = currentLane.getTurnDirection(this.nextLane);
-      }
+      turnNumber = currentLane.getTurnDirection(this.nextLane);
       preferedLane = (function() {
         switch (turnNumber) {
           case 0:
@@ -661,40 +555,24 @@ Car = (function() {
   };
 
   Car.prototype.pickNextLane = function() {
-    var laneNumber, nextRoad, turnNumber, lane, R;
-//    if (this.nextLane || (this.car.nextLane && this.car.nextLane.isClosed)) {
-//      throw Error('next lane is already chosen');
-//    }
-
+    var laneNumber, nextRoad, turnNumber;
+    if (this.nextLane) {
+      throw Error('next lane is already chosen');
+    }
     this.nextLane = null;
     nextRoad = this.pickNextRoad();
     if (!nextRoad) {
       return null;
     }
-
-    //Calculate turn direction (which road to go to)
     turnNumber = this.trajectory.current.lane.road.getTurnDirection(nextRoad);
-
     laneNumber = (function() {
       switch (turnNumber) {
         case 0:
-          R = nextRoad.lanesNumber - 1;
-          while(nextRoad.lanes[R].isClosed){
-            R -= 1;
-          }
-          return R;
+          return nextRoad.lanesNumber - 1;
         case 1:
-          R = _.random(0, nextRoad.lanesNumber - 1);
-          while(nextRoad.lanes[R].isClosed){
-            R = _.random(0, nextRoad.lanesNumber - 1);
-          }
-          return R;
+          return _.random(0, nextRoad.lanesNumber - 1);
         case 2:
-          R = 0;
-          while(nextRoad.lanes[R].isClosed){
-            R += 1;
-          }
-          return R;
+          return 0;
       }
     })();
     this.nextLane = nextRoad.lanes[laneNumber];
@@ -719,7 +597,7 @@ Car = (function() {
 module.exports = Car;
 
 
-},{"../helpers":6,"../settings":16,"./trajectory":14,"underscore":32}],8:[function(require,module,exports){
+},{"../helpers":6,"../settings":16,"./trajectory":14,"underscore":33}],8:[function(require,module,exports){
 'use strict';
 var ControlSignals, random, settings,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
@@ -820,14 +698,6 @@ ControlSignals = (function() {
     }
   };
 
-  ControlSignals.prototype.Stop = function(delta) {
-    this.time += delta;
-    if (this.time > this.flipInterval) {
-      this.flip();
-      return this.time -= this.flipInterval;
-    }
-  };
-
   return ControlSignals;
 
 })();
@@ -899,7 +769,7 @@ Intersection = (function() {
 module.exports = Intersection;
 
 
-},{"../geom/rect":4,"../helpers":6,"./control-signals":8,"underscore":32}],10:[function(require,module,exports){
+},{"../geom/rect":4,"../helpers":6,"./control-signals":8,"underscore":33}],10:[function(require,module,exports){
 'use strict';
 var LanePosition, _;
 
@@ -980,7 +850,7 @@ LanePosition = (function() {
 module.exports = LanePosition;
 
 
-},{"../helpers":6,"underscore":32}],11:[function(require,module,exports){
+},{"../helpers":6,"underscore":33}],11:[function(require,module,exports){
 'use strict';
 var Lane, Segment, _;
 
@@ -1002,7 +872,6 @@ Lane = (function() {
     this.isClosed = false;
     this.isChanged = false;
     this.carsDependent = 0;
-    //Mario: It was an object, changed to array so we can access length (hope nothing breaks)
     this.carsPositions = [];
     this.update();
   }
@@ -1056,36 +925,25 @@ Lane = (function() {
     return this.direction = this.middleLine.direction;
   };
 
-  //Mario: Tries to open the lane if it is closed
   Lane.prototype.tryOpen = function() {
-    var road, next_road, new_lanes;
+    var new_lanes, next_road, road;
     road = this.road;
-    if (this.isClosed == false) {
+    if (this.isClosed === false) {
       return true;
     }
-
-    if (this.carsDependent == 0) //If it is finally empty, we can proceed with
-    {
+    if (true) {
       road.lanesNumber -= 1;
-      road.lanes = road.lanes.slice(0,road.lanesNumber);
+      road.lanes = road.lanes.slice(0, road.lanesNumber);
       road.update(road.lanesNumber);
-
-      // This adds a lane in the other direction
       next_road = road.oppositeRoad;
       new_lanes = next_road.lanes;
-      // Change the direction and other attributes to make it go in the other direction
       this.direction += Math.PI;
       this.road = next_road;
-  //    removed_lane.sourceSegment, removed_lane.targetSegment = removed_lane.targetSegment, removed_lane.sourceSegment;
-
-      new_lanes.unshift(this); // Add removed_lane at [0], i.e., rightmostLane
-
+      new_lanes.unshift(this);
       next_road.lanes = new_lanes;
-      // next_road.rightmostLane = removed_lane;
       next_road.lanesNumber += 1;
       next_road.update(next_road.lanesNumber);
-
-      this.isChanged = true;//For debug purposes, no real logic behind it.
+      this.isChanged = true;
       this.isClosed = false;
       console.log('LANE OPENED');
       return true;
@@ -1148,7 +1006,7 @@ Lane = (function() {
 module.exports = Lane;
 
 
-},{"../geom/segment":5,"../helpers":6,"underscore":32}],12:[function(require,module,exports){
+},{"../geom/segment":5,"../helpers":6,"underscore":33}],12:[function(require,module,exports){
 'use strict';
 var Pool;
 
@@ -1196,9 +1054,6 @@ Pool = (function() {
   };
 
   Pool.prototype.clear = function() {
-    // Comment-David
-    // This fixes the bug that didn't allow us to open the html and forced us
-    // to use incognito mode in Chrome.
     localStorage.clear();
     return this.objects = {};
   };
@@ -1235,10 +1090,9 @@ Road = (function() {
     this.source = source;
     this.target = target;
     this.id = _.uniqueId('road');
-    // Mario: Initializing as null road. Might populate later idk
-    this.oppositeRoad = null;
     this.lanes = [];
     this.lanesNumber = null;
+    this.oppositeRoad = null;
     this.update();
   }
 
@@ -1281,53 +1135,35 @@ Road = (function() {
 
   Road.prototype.getTurnDirection = function(other) {
     var side1, side2, turnNumber;
-    // If we comment this if a lot of errors go away...
     if (this.target !== other.source) {
-      console.log()
-      console.log(this.target);
-      console.log(other.source);
       throw Error('invalid roads');
     }
-    //Mario - Reverse engineering comments
-    
-    //Side is an id assigned to each face of the square representing the intersection.
-    // 0 - Up, 1 - Right, 2 - Down, 3 - Left
-    side1 = this.targetSideId; //The side of the intersection I am currently facing.
-    side2 = other.sourceSideId; //The side of the intersection I want to head torwards. (Road to take already decided)
-    // % This funciton gets the face of the current intersection and the face of the next intersection and tells you whether when you get to the intersection:
-    // 0 - You will go left
-    // 1 - You will go straight ahead
-    // 2 - You will go right
+    side1 = this.targetSideId;
+    side2 = other.sourceSideId;
     return turnNumber = (side2 - side1 - 1 + 8) % 4;
   };
 
-  Road.prototype.update = function(known_number_lanes=null) {
-    var i, sourceSplits, targetSplits, _base, _i, _j, _ref, _ref1, _results, lanes_proportion;
-    if (known_number_lanes == null){
-      lanes_proportion = 0.5;
+  Road.prototype.update = function(known_number_lanes) {
+    var i, lanes_proportion, sourceSplits, targetSplits, _base, _i, _j, _ref, _ref1, _results;
+    if (known_number_lanes == null) {
+      known_number_lanes = null;
     }
-    else {
-      lanes_proportion = known_number_lanes*(0.5/settings.lanesNumber)
-    }
-
     if (!(this.source && this.target)) {
       throw Error('incomplete road');
     }
-
+    if (known_number_lanes === null) {
+      lanes_proportion = 0.5;
+    } else {
+      lanes_proportion = known_number_lanes * (0.5 / settings.lanesNumber);
+    }
     this.sourceSideId = this.source.rect.getSectorId(this.target.rect.center());
-    // Only half of the road?
-    this.sourceSide = this.source.rect.getSide(this.sourceSideId).subsegment(1-lanes_proportion, 1.0);
+    this.sourceSide = this.source.rect.getSide(this.sourceSideId).subsegment(1 - lanes_proportion, 1.0);
     this.targetSideId = this.target.rect.getSectorId(this.source.rect.center());
-    // Only half of the road?
     this.targetSide = this.target.rect.getSide(this.targetSideId).subsegment(0, lanes_proportion);
-
-    // Comment-David
-    // This allows us to change the number of lanes from the slider and we ignore it when we reduce/add a lane
-    if (known_number_lanes == null){
+    if (known_number_lanes === null) {
       this.lanesNumber = min(this.sourceSide.length, this.targetSide.length);
       this.lanesNumber = max(settings.lanesNumber, this.lanesNumber / settings.gridSize);
     }
-
     sourceSplits = this.sourceSide.split(this.lanesNumber, true);
     targetSplits = this.targetSide.split(this.lanesNumber);
     if ((this.lanes == null) || this.lanes.length < this.lanesNumber) {
@@ -1360,7 +1196,7 @@ Road = (function() {
 module.exports = Road;
 
 
-},{"../helpers":6,"../settings":16,"./lane":11,"underscore":32}],14:[function(require,module,exports){
+},{"../helpers":6,"../settings":16,"./lane":11,"underscore":33}],14:[function(require,module,exports){
 'use strict';
 var Curve, LanePosition, Trajectory, max, min, _;
 
@@ -1457,29 +1293,13 @@ Trajectory = (function() {
   });
 
   Trajectory.prototype.isValidTurn = function() {
-    var nextLane, sourceLane, turnNumber, currentRoad, nextRoad;
+    var nextLane, sourceLane, turnNumber;
     nextLane = this.car.nextLane;
     sourceLane = this.current.lane;
     if (!nextLane) {
       throw Error('no road to enter');
     }
-    //Mario - Pesky error fixes
-    if (sourceLane.road.target !== nextLane.road.source)//Gotta fix roads before calculating turnNumber, design failure by the original author.
-    {
-        currentRoad = sourceLane.road;
-        nextRoad = nextLane.road.oppositeRoad;
-
-        if(currentRoad.target !== nextRoad.source)
-        {
-          currentRoad = sourceLane.road.oppositeRoad;
-          nextRoad = nextLane.road;
-        }
-        turnNumber = currentRoad.getTurnDirection(nextRoad);
-    }else
-    {
-      turnNumber = sourceLane.getTurnDirection(nextLane);
-    }
-    
+    turnNumber = sourceLane.getTurnDirection(nextLane);
     if (turnNumber === 3) {
       throw Error('no U-turns are allowed');
     }
@@ -1493,53 +1313,14 @@ Trajectory = (function() {
   };
 
   Trajectory.prototype.canEnterIntersection = function() {
-    var intersection, nextLane, sideId, sourceLane, turnNumber, currentRoad, nextRoad, lane, laneNumber, R;
+    var intersection, nextLane, sideId, sourceLane, turnNumber;
     nextLane = this.car.nextLane;
     sourceLane = this.current.lane;
     if (!nextLane) {
       return true;
     }
     intersection = this.nextIntersection;
-    if(sourceLane.road.target !== nextLane.road.source)//AKA 'invalid roads' error in getTurnDirection (nextLane or sourcelane changed direction since you picked it)
-    {
-      
-      currentRoad = sourceLane.road;
-      nextRoad = nextLane.road.oppositeRoad;
-
-      if(currentRoad.target !== nextRoad.source)
-      {
-        currentRoad = sourceLane.road.oppositeRoad;
-        nextRoad = nextLane.road;
-      }
-
-      turnNumber = currentRoad.getTurnDirection(nextRoad);
-
-      laneNumber = (function() {
-        switch (turnNumber) {
-          case 0:
-            R = nextRoad.lanesNumber - 1;
-            while(nextRoad.lanes[R].isClosed){
-              R -= 1;
-            }
-          case 1:
-            R = _.random(0, nextRoad.lanesNumber - 1);
-            while(nextRoad.lanes[R].isClosed){
-              R = _.random(0, nextRoad.lanesNumber - 1);
-            }
-          case 2:
-            R = 0;
-            while(nextRoad.lanes[R].isClosed){
-              R += 1;
-            }
-        }
-      })();
-
-      nextLane = nextRoad.lanes[R];
-      this.car.nextLane = nextRoad.lanes[R];
-    }else
-    {
-      turnNumber = sourceLane.getTurnDirection(nextLane);
-    }
+    turnNumber = sourceLane.getTurnDirection(nextLane);
     sideId = sourceLane.road.targetSideId;
     return intersection.controlSignals.state[sideId][turnNumber];
   };
@@ -1581,8 +1362,7 @@ Trajectory = (function() {
     if (this.isChangingLanes && tempRelativePosition >= 1) {
       this._finishChangingLanes();
     }
-    //Mario - When picking next lane you already know the road to take (invariant) so you merely need to consider all OPEN lanes in said road.
-    if ((this.car.nextLane && this.car.nextLane.isClosed) || (this.current.lane && !this.isChangingLanes && !this.car.nextLane)) {
+    if (this.current.lane && !this.isChangingLanes && !this.car.nextLane) {
       return this.car.pickNextLane();
     }
   };
@@ -1602,11 +1382,9 @@ Trajectory = (function() {
       throw Error('not neighbouring lanes');
     }
     nextPosition = this.current.position + 3 * this.car.length;
-    //TODO: What to do here?
-    // if (!(nextPosition < this.lane.length)) { //Commenting for now
-    //   console.log(this.car);
-    //   throw Error('too late to change lane');
-    // }
+    if (!(nextPosition < this.lane.length)) {
+      throw Error('too late to change lane');
+    }
     return this._startChangingLanes(nextLane, nextPosition);
   };
 
@@ -1650,10 +1428,7 @@ Trajectory = (function() {
       throw Error('no lane changing is going on');
     }
     this.isChangingLanes = false;
-    this.current.lane.carsDependent -= 1;
-    this.current.lane.tryOpen();
     this.current.lane = this.next.lane;
-    this.current.lane.carsDependent += 1;
     this.current.position = this.next.position || 0;
     this.current.acquire();
     this.next.lane = null;
@@ -1681,7 +1456,7 @@ Trajectory = (function() {
 module.exports = Trajectory;
 
 
-},{"../geom/curve":2,"../helpers":6,"./lane-position":10,"underscore":32}],15:[function(require,module,exports){
+},{"../geom/curve":2,"../helpers":6,"./lane-position":10,"underscore":33}],15:[function(require,module,exports){
 'use strict';
 var Car, Intersection, Pool, Rect, Road, World, random, settings, _,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; };
@@ -1721,24 +1496,6 @@ World = (function() {
       }
       return (_.reduce(speeds, function(a, b) {
         return a + b;
-      })) / 1;
-    }
-  });
-
-  // Comment-David
-  // The flux is defined as j = I/A, where I = dN/dt (A=area, N=numbers of cars, t=time). I don't know what could be A in
-  // this case (maybe number of lanes), so I am going to measure the average speed for the moment.
-  World.property('averageSpeed', {
-    get: function() {
-      var speeds;
-      speeds = _.map(this.cars.all(), function(car) {
-        return car.speed;
-      });
-      if (speeds.length === 0) {
-        return 0;
-      }
-      return (_.reduce(speeds, function(a, b) {
-        return a + b;
       })) / speeds.length;
     }
   });
@@ -1751,6 +1508,7 @@ World = (function() {
     this.roads = new Pool(Road, obj.roads);
     this.cars = new Pool(Car, obj.cars);
     this.carsNumber = 0;
+    this.lanesNumber = 2;
     return this.time = 0;
   };
 
@@ -1758,24 +1516,18 @@ World = (function() {
     var data;
     data = _.extend({}, this);
     delete data.cars;
-    console.log(data);
-
     return localStorage.world = JSON.stringify(data);
   };
 
   World.prototype.load = function(data) {
-    var id, intersection, road, _ref, _ref1, _refcars, _results;
+    var id, intersection, road, _ref, _ref1, _results;
     data = data || localStorage.world;
     data = data && JSON.parse(data);
-    _refcars = this.cars;
     if (data == null) {
       return;
     }
     this.clear();
     this.carsNumber = data.carsNumber || 0;
-//    for (id in _refcars.objects){
-//      this.addCar(id);
-//    }
     _ref = data.intersections;
     for (id in _ref) {
       intersection = _ref[id];
@@ -1794,7 +1546,7 @@ World = (function() {
   };
 
   World.prototype.generateMap = function(minX, maxX, minY, maxY) {
-    var gridSize, intersection, intersectionsNumber, map, previous, rect, step, x, y, _i, _j, _k, _l, road1, road2;
+    var gridSize, intersection, intersectionsNumber, map, previous, rect, step, x, y, _i, _j, _k, _l;
     if (minX == null) {
       minX = -2;
     }
@@ -1812,7 +1564,8 @@ World = (function() {
     map = {};
     gridSize = settings.gridSize;
     step = 5 * gridSize;
-    this.carsNumber = 50;
+    this.carsNumber = 100;
+    this.lanesNumber = 2;
     while (intersectionsNumber > 0) {
       x = _.random(minX, maxX);
       y = _.random(minY, maxY);
@@ -1830,14 +1583,10 @@ World = (function() {
         if (intersection != null) {
           if (random() < 0.9) {
             if (previous != null) {
-              road1 = new Road(intersection, previous);
-              road2 = new Road(previous, intersection);
-
-              road1.oppositeRoad = road2;
-              road2.oppositeRoad = road1;
-
-              this.addRoad(road1);
-              this.addRoad(road2);
+              this.addRoad(new Road(intersection, previous));
+            }
+            if (previous != null) {
+              this.addRoad(new Road(previous, intersection));
             }
           }
           previous = intersection;
@@ -1851,14 +1600,10 @@ World = (function() {
         if (intersection != null) {
           if (random() < 0.9) {
             if (previous != null) {
-              road1 = new Road(intersection, previous);
-              road2 = new Road(previous, intersection);
-
-              road1.oppositeRoad = road2;
-              road2.oppositeRoad = road1;
-
-              this.addRoad(road1);
-              this.addRoad(road2);
+              this.addRoad(new Road(intersection, previous));
+            }
+            if (previous != null) {
+              this.addRoad(new Road(previous, intersection));
             }
           }
           previous = intersection;
@@ -1867,44 +1612,19 @@ World = (function() {
     }
     return null;
   };
-  // Comment-David
-  // Function to change the number of lanes
-  World.prototype.changeNumberofLanes = function() {
-    var road, next_road, _refroads, id, x, lane, removed_lane, added_lane, new_lanes;
 
+  World.prototype.changeNumberofLanes = function() {
+    var id, removed_lane, road, _refroads;
     _refroads = this.roads.all();
     id = _.sample(this.roads.all()).id;
     road = _refroads[id];
-    // This reduces a lane in one direction
-    removed_lane = road.leftmostLane; // Equivalent to road.lanes[road.lanesNumbers - 1]
+    removed_lane = road.leftmostLane;
     console.log('LANE CLOSED');
     removed_lane.isClosed = true;
     removed_lane.tryOpen();
-    // Search for the road next to the current road
-    // Mario: we should make an opposite road property for each road that lets us NOT have to search each time.
-//    for (id in _refroads){
-//      x = _refroads[id]
-//      if (x.source.id == road.target.id && x.target.id == road.source.id){
-//        next_road = x;
-//        next_road.oppositeRoad = road;
-//        road.oppositeRoad = next_road;
-//
-//        break;
-//      }
-//    }
   };
 
-  // Comment-David
-  // Function to stop the traffic in a road
-  World.prototype.StopRoad = function() {
-    var road, _refroads, id, x, lane, removed_lane, added_lane, new_lanes;
-
-    _refroads = this.roads.all();
-    id = _.sample(this.roads.all()).id;
-    road = _refroads[id];
-    road.source.controlSignals.
-    console.log(road);
-  };
+  World.prototype.StopRoad = function() {};
 
   World.prototype.clear = function() {
     return this.set({});
@@ -1928,7 +1648,6 @@ World = (function() {
       car = _ref1[id];
       car.move(delta);
       if (!car.alive) {
-        car.trajectory.current.lane.carsDependent -= 1;
         _results.push(this.removeCar(car));
       } else {
         _results.push(void 0);
@@ -1954,7 +1673,6 @@ World = (function() {
   };
 
   World.prototype.getRoad = function(id) {
-//    console.log(this.roads.get(id));
     return this.roads.get(id);
   };
 
@@ -1981,93 +1699,10 @@ World = (function() {
   World.prototype.addRandomCar = function() {
     var lane, road;
     road = _.sample(this.roads.all());
-    lane = _.sample(road.lanes);
     if (road != null) {
       lane = _.sample(road.lanes);
       if (lane != null) {
-        // Comment-David
-        // To see what attributes the lane class has, lane.road seems useful to create the moving lane
-        // console.log(lane)
-        // Number of roads in the map
-        // console.log(Object.keys(this.roads.all()).length)
-        // console.log(this.roads.all())
         return this.addCar(new Car(lane));
-      }
-    }
-  };
-
-  // Comment-David
-  // The next functions will try to create traffic in a certain direction
-
-  World.prototype.addCarEast = function() {
-    var flag;
-    var lane, road;
-    flag = true;
-    while (flag){
-      road = _.sample(this.roads.all());
-      if (road != null) {
-        lane = _.sample(road.lanes);
-        if (lane != null && lane.direction === 0) {
-          flag = false;
-          this.carsNumber += 1;
-          return this.addCar(new Car(lane, 0.8, 0.7));
-        }
-      }
-    }
-  };
-
-  World.prototype.addCarWest = function() {
-    var flag;
-    var lane, road;
-    flag = true;
-    while (flag){
-      road = _.sample(this.roads.all());
-      if (road != null) {
-        lane = _.sample(road.lanes);
-//        console.log(lane.road)
-        if (lane != null && lane.direction === Math.PI) {
-          flag = false;
-          this.carsNumber += 1;
-          // Comment-David
-          // To see the attributes of Car
-          console.log(new Car(lane));
-          return this.addCar(new Car(lane));
-        }
-      }
-    }
-  };
-
-  World.prototype.addCarNorth = function() {
-    var flag;
-    var lane, road;
-    flag = true;
-    while (flag){
-      road = _.sample(this.roads.all());
-      if (road != null) {
-        lane = _.sample(road.lanes);
-        if (lane != null && lane.direction === -Math.PI / 2) {
-          flag = false;
-          this.carsNumber += 1;
-          return this.addCar(new Car(lane));
-        }
-      }
-    }
-  };
-
-  World.prototype.addCarSouth = function() {
-    var flag;
-    var lane, road;
-    flag = true;
-    while (flag){
-      road = _.sample(this.roads.all());
-      if (road != null) {
-        lane = _.sample(road.lanes);
-//        console.log(lane.direction)
-        if (lane != null && lane.direction === Math.PI / 2) {
-          flag = false;
-          this.carsNumber += 1;
-          return this.addCar(new Car(lane));
-        }
       }
     }
   };
@@ -2080,6 +1715,70 @@ World = (function() {
     }
   };
 
+  World.prototype.addCarEast = function() {
+    var flag, lane, road;
+    flag = true;
+    while (flag) {
+      road = _.sample(this.roads.all());
+      if (road !== null) {
+        lane = _.sample(road.lanes);
+        if (lane !== null && lane.direction === 0) {
+          flag = false;
+          this.carsNumber += 1;
+          return this.addCar(new Car(lane));
+        }
+      }
+    }
+  };
+
+  World.prototype.addCarWest = function() {
+    var flag, lane, road;
+    flag = true;
+    while (flag) {
+      road = _.sample(this.roads.all());
+      if (road !== null) {
+        lane = _.sample(road.lanes);
+        if (lane !== null && lane.direction === Math.PI) {
+          flag = false;
+          this.carsNumber += 1;
+          return this.addCar(new Car(lane));
+        }
+      }
+    }
+  };
+
+  World.prototype.addCarNorth = function() {
+    var flag, lane, road;
+    flag = true;
+    while (flag) {
+      road = _.sample(this.roads.all());
+      if (road !== null) {
+        lane = _.sample(road.lanes);
+        if (lane !== null && lane.direction === -Math.PI / 2) {
+          flag = false;
+          this.carsNumber += 1;
+          return this.addCar(new Car(lane));
+        }
+      }
+    }
+  };
+
+  World.prototype.addCarSouth = function() {
+    var flag, lane, road;
+    flag = true;
+    while (flag) {
+      road = _.sample(this.roads.all());
+      if (road !== null) {
+        lane = _.sample(road.lanes);
+        if (lane !== null && lane.direction === Math.PI / 2) {
+          flag = false;
+          this.carsNumber += 1;
+          return this.addCar(new Car(lane));
+        }
+      }
+    }
+  };
+
   return World;
 
 })();
@@ -2087,7 +1786,7 @@ World = (function() {
 module.exports = World;
 
 
-},{"../geom/rect":4,"../helpers":6,"../settings":16,"./car":7,"./intersection":9,"./pool":12,"./road":13,"underscore":32}],16:[function(require,module,exports){
+},{"../geom/rect":4,"../helpers":6,"../settings":16,"./car":7,"./intersection":9,"./pool":12,"./road":13,"underscore":33}],16:[function(require,module,exports){
 'use strict';
 var settings;
 
@@ -2111,7 +1810,6 @@ settings = {
   lightsFlipInterval: 160,
   gridSize: 14,
   defaultTimeFactor: 3,
-  carsNumber: 50,
   lanesNumber: 3,
   probCar: 0.8,
   probBus: 0.15,
@@ -2127,7 +1825,6 @@ var Graphics, PI,
   __slice = [].slice;
 
 PI = Math.PI;
-
 
 require('../helpers.coffee');
 
@@ -2564,11 +2261,7 @@ ToolRoadBuilder = (function(_super) {
         return this.dualRoad.source = hoveredIntersection;
       } else {
         this.road = new Road(this.sourceIntersection, hoveredIntersection);
-        this.dualRoad = new Road(hoveredIntersection, this.sourceIntersection);
-        this.road.oppositeRoad = this.dualRoad;
-        this.dualRoad.oppositeRoad = this.road;
-
-        return this.dualRoad;
+        return this.dualRoad = new Road(hoveredIntersection, this.sourceIntersection);
       }
     } else {
       return this.road = this.dualRoad = null;
@@ -2686,7 +2379,7 @@ Tool = (function() {
 module.exports = Tool;
 
 
-},{"../geom/point.coffee":3,"../geom/rect.coffee":4,"../helpers.coffee":6,"jquery":31,"jquery-mousewheel":30,"underscore":32}],24:[function(require,module,exports){
+},{"../geom/point.coffee":3,"../geom/rect.coffee":4,"../helpers.coffee":6,"jquery":32,"jquery-mousewheel":31,"underscore":33}],24:[function(require,module,exports){
 'use strict';
 var $, Graphics, PI, Point, Rect, ToolHighlighter, ToolIntersectionBuilder, ToolIntersectionMover, ToolMover, ToolRoadBuilder, Visualizer, Zoomer, chroma, settings, _,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; };
@@ -2745,7 +2438,7 @@ Visualizer = (function() {
   }
 
   Visualizer.prototype.drawIntersection = function(intersection, alpha) {
-    var color, text;
+    var color;
     color = intersection.color || settings.colors.intersection;
     this.graphics.drawRect(intersection.rect);
     this.ctx.lineWidth = 0.4;
@@ -2754,7 +2447,7 @@ Visualizer = (function() {
   };
 
   Visualizer.prototype.drawSignals = function(road) {
-    var center, flipInterval, intersection, lights, lightsColors, phaseOffset, segment, sideId;
+    var center, flipInterval, intersection, lights, lightsColors, phaseOffset, road_id, segment, sideId;
     lightsColors = [settings.colors.redLight, settings.colors.greenLight];
     intersection = road.target;
     segment = road.targetSide;
@@ -2782,58 +2475,39 @@ Visualizer = (function() {
       this.ctx.fillStyle = "black";
       this.ctx.font = "1px Arial";
       center = intersection.rect.center();
-      flipInterval = Math.round(intersection.controlSignals.flipInterval * 100) / 100;
+      road_id = flipInterval = Math.round(intersection.controlSignals.flipInterval * 100) / 100;
       phaseOffset = Math.round(intersection.controlSignals.phaseOffset * 100) / 100;
-      // There is no useful information in this
-      // this.ctx.fillText(flipInterval + ' ' + phaseOffset, center.x, center.y);
-      this.ctx.fillStyle = "red";
-      this.ctx.font = "1px Arial";
-      this.ctx.fillText(intersection.id, center.x, center.y);
+      this.ctx.fillText(flipInterval + ' ' + phaseOffset, center.x, center.y);
       return this.ctx.restore();
     }
   };
 
-  Visualizer.prototype.drawRoad = function(road, car, alpha) {
-    var dashSize, lane, leftLine, line, rightLine, middleLine, borders, sourceSide, targetSide, _i, _len, _ref, _refcars, _refroads, id, car;
-    var flux, next_flux, flux_total, density, next_density, next_road, targetid, n_lanes, n_lanes_next, percentage;
+  Visualizer.prototype.drawRoad = function(road, alpha) {
+    var car, dashSize, density, flux, flux_total, lane, leftLine, line, n_lanes, n_lanes_next, next_flux, next_road, percentage, rightLine, sourceSide, targetSide, _i, _j, _k, _len, _len1, _len2, _ref, _ref1, _ref2, _refcars, _refroads;
     if ((road.source == null) || (road.target == null)) {
       throw Error('invalid road');
     }
     sourceSide = road.sourceSide;
     targetSide = road.targetSide;
+    if (this.debug) {
+      this.ctx.save();
+      this.ctx.fillStyle = "red";
+      this.ctx.font = "1px Arial";
+      this.ctx.fillText("TEST", -224, 42);
+    }
     this.ctx.save();
     this.ctx.lineWidth = 0.4;
-//    This is the original, but the middle line doesn't work well when we add/remove lanes
     leftLine = road.leftmostLane.leftBorder;
     this.graphics.drawSegment(leftLine);
     this.graphics.stroke(settings.colors.roadMiddleLane);
     rightLine = road.rightmostLane.rightBorder;
     this.graphics.drawSegment(rightLine);
     this.graphics.stroke(settings.colors.roadMarking);
-
-//    middleLine = road.leftmostLane.leftBorder;
-//    this.graphics.drawSegment(leftLine);
-//    this.graphics.stroke(settings.colors.roadMarking);
-//    borders = road.rightmostLane.rightBorder;
-//    this.graphics.drawSegment(borders);
-//    this.graphics.stroke(settings.colors.roadMarking);
-
     this.ctx.restore();
     this.graphics.polyline(sourceSide.source, sourceSide.target, targetSide.source, targetSide.target);
     this.graphics.fill(settings.colors.road, alpha);
-    //Mario: Draw closed lanes as RED
-    for(_i in road.lanes)
-    {
-      lane = road.lanes[_i];
-      if(lane.isClosed)
-      {
-        this.graphics.polyline(lane.sourceSegment.source, lane.sourceSegment.target, lane.targetSegment.source, lane.targetSegment.target);
-        this.graphics.fill('red', 0.2);
-      }
-    }
     this.ctx.save();
-    _ref = road.lanes.slice(1, road.lanes.length);
-//    console.log(_ref);
+    _ref = road.lanes.slice(1);
     for (_i = 0, _len = _ref.length; _i < _len; _i++) {
       lane = _ref[_i];
       line = lane.rightBorder;
@@ -2844,67 +2518,47 @@ Visualizer = (function() {
       this.ctx.setLineDash([dashSize]);
       this.graphics.stroke(settings.colors.roadMarking);
     }
-    this.ctx.restore();
-    // Comment-David
-    // This add the road-id to the debug feature
-    
     if (this.debug) {
       this.ctx.save();
       this.ctx.fillStyle = "red";
       this.ctx.font = "1px Arial";
       this.ctx.fillText(road.id, (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y) / 2);
-
-      // Find the road besides the current road
+      this.ctx.fillText("#lanes=" + road.lanesNumber, (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y) / 2 + 1);
       _refroads = this.world.roads.all();
-      for (_ref in _refroads){
-        if (_refroads[_ref].source.id == road.target.id && _refroads[_ref].target.id == road.source.id){
-          // console.log(_refroads[_ref], road);
-          next_road = _refroads[_ref];
+      _ref1 = Object.values(_refroads);
+      for (_j = 0, _len1 = _ref1.length; _j < _len1; _j++) {
+        _ref = _ref1[_j];
+        if (_ref.source.id === road.target.id && _ref.target.id === road.source.id) {
+          next_road = _ref;
         }
       }
-
-      // This will measure the flux in each road, it will be useful when making the decision of adding more lanes
-      flux = 0;
-      next_flux = 0;
+      flux = 0.0;
+      next_flux = 0.0;
       _refcars = this.world.cars.all();
-
-      // Count the number of cars in each road
-      for (id in _refcars){
-        car = _refcars[id];
-
-        if (car.trajectory.current._lane.road.id == road.id){
+      _ref2 = Object.values(_refcars);
+      for (_k = 0, _len2 = _ref2.length; _k < _len2; _k++) {
+        car = _ref2[_k];
+        if (car.trajectory.current._lane.road.id === road.id) {
           flux += 1;
         }
-
-        if (car.trajectory.current._lane.road.id == next_road.id){
+        if (car.trajectory.current._lane.road.id === next_road.id) {
           next_flux += 1;
         }
       }
-
-      // This will measure the density according to equations (2) and (3)
-      // from https://www.researchgate.net/publication/348225622_Modeling_adaptive_reversible_lanes_A_cellular_automata_approach,
-      // we are taking rho = 1
       flux_total = flux + next_flux;
-      percentage = flux/flux_total
-      n_lanes = road.lanesNumber;
-      n_lanes_next = next_road.lanesNumber;
-
-      density = (n_lanes_next/n_lanes) * (percentage) / (1 - percentage);
-
-      // It happens when one road has cars and the next road is empty, in that case it is better
-      // to define it as one
-      if (density == Infinity){
+      percentage = flux / flux_total;
+      n_lanes = 2;
+      n_lanes_next = 2;
+      density = (n_lanes_next / n_lanes) * percentage / (1 - percentage);
+      if (density === Infinity) {
         density = 1;
       }
-
-      // The road is empty
-      if (isNaN(density)){
+      if (isNaN(density)) {
         density = 0;
       }
-
-      this.ctx.fillText("ρ=" + density.toFixed(3), (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y + 2) / 2);
-      return this.ctx.restore();
+      this.ctx.fillText("ρ=" + density.toFixed(3), (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y) / 2 + 2);
     }
+    return this.ctx.restore();
   };
 
   Visualizer.prototype.drawCar = function(car) {
@@ -3041,7 +2695,7 @@ Visualizer = (function() {
 module.exports = Visualizer;
 
 
-},{"../geom/point":3,"../geom/rect":4,"../helpers":6,"../settings":16,"./graphics":17,"./highlighter":18,"./intersection-builder":19,"./intersection-mover":20,"./mover":21,"./road-builder":22,"./zoomer":25,"chroma-js":26,"jquery":31,"underscore":32}],25:[function(require,module,exports){
+},{"../geom/point":3,"../geom/rect":4,"../helpers":6,"../settings":16,"./graphics":17,"./highlighter":18,"./intersection-builder":19,"./intersection-mover":20,"./mover":21,"./road-builder":22,"./zoomer":25,"chroma-js":27,"jquery":32,"underscore":33}],25:[function(require,module,exports){
 'use strict';
 var Point, Rect, Tool, Zoomer, max, min, settings,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
@@ -3152,6 +2806,8 @@ module.exports = Zoomer;
 
 
 },{"../geom/point.coffee":3,"../geom/rect.coffee":4,"../helpers.coffee":6,"../settings.coffee":16,"./tool.coffee":23}],26:[function(require,module,exports){
+
+},{}],27:[function(require,module,exports){
 // Generated by CoffeeScript 1.6.2
 /** echo  * @license echo  * while read i do echo  *  done echo
 */
@@ -5016,10 +4672,10 @@ module.exports = Zoomer;
 
 }).call(this);
 
-},{}],27:[function(require,module,exports){
+},{}],28:[function(require,module,exports){
 module.exports = require('./vendor/dat.gui')
 module.exports.color = require('./vendor/dat.color')
-},{"./vendor/dat.color":28,"./vendor/dat.gui":29}],28:[function(require,module,exports){
+},{"./vendor/dat.color":29,"./vendor/dat.gui":30}],29:[function(require,module,exports){
 /**
  * dat-gui JavaScript Controller Library
  * http://code.google.com/p/dat-gui
@@ -5775,7 +5431,7 @@ dat.color.math = (function () {
 })(),
 dat.color.toString,
 dat.utils.common);
-},{}],29:[function(require,module,exports){
+},{}],30:[function(require,module,exports){
 /**
  * dat-gui JavaScript Controller Library
  * http://code.google.com/p/dat-gui
@@ -9436,13 +9092,13 @@ dat.dom.CenteredDiv = (function (dom, common) {
 dat.utils.common),
 dat.dom.dom,
 dat.utils.common);
-},{}],30:[function(require,module,exports){
-/*! Copyright (c) 2013 Brandon Aaron (http://brandon.aaron.sh)
- * Licensed under the MIT License (LICENSE.txt).
+},{}],31:[function(require,module,exports){
+/*!
+ * jQuery Mousewheel 3.1.13
  *
- * Version: 3.1.12
- *
- * Requires: jQuery 1.2.2+
+ * Copyright jQuery Foundation and other contributors
+ * Released under the MIT license
+ * http://jquery.org/license
  */
 
 (function (factory) {
@@ -9659,9 +9315,9 @@ dat.utils.common);
 
 }));
 
-},{}],31:[function(require,module,exports){
+},{}],32:[function(require,module,exports){
 /*!
- * jQuery JavaScript Library v2.1.3
+ * jQuery JavaScript Library v2.1.4
  * http://jquery.com/
  *
  * Includes Sizzle.js
@@ -9671,7 +9327,7 @@ dat.utils.common);
  * Released under the MIT license
  * http://jquery.org/license
  *
- * Date: 2014-12-18T15:11Z
+ * Date: 2015-04-28T16:01Z
  */
 
 (function( global, factory ) {
@@ -9729,7 +9385,7 @@ var
 	// Use the correct document accordingly with window argument (sandbox)
 	document = window.document,
 
-	version = "2.1.3",
+	version = "2.1.4",
 
 	// Define a local copy of jQuery
 	jQuery = function( selector, context ) {
@@ -10193,7 +9849,12 @@ jQuery.each("Boolean Number String Function Array Date RegExp Object Error".spli
 });
 
 function isArraylike( obj ) {
-	var length = obj.length,
+
+	// Support: iOS 8.2 (not reproducible in simulator)
+	// `in` check used to prevent JIT error (gh-2145)
+	// hasOwn isn't used here due to false negatives
+	// regarding Nodelist length in IE
+	var length = "length" in obj && obj.length,
 		type = jQuery.type( obj );
 
 	if ( type === "function" || jQuery.isWindow( obj ) ) {
@@ -18866,7 +18527,7 @@ return jQuery;
 
 }));
 
-},{}],32:[function(require,module,exports){
+},{}],33:[function(require,module,exports){
 //     Underscore.js 1.6.0
 //     http://underscorejs.org
 //     (c) 2009-2014 Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
@@ -20212,4 +19873,3 @@ return jQuery;
 }).call(this);
 
 },{}]},{},[1])
-

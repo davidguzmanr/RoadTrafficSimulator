@@ -29,6 +29,11 @@ class Pool
     @objects
 
   clear: ->
+    # Comment-David
+    # This fixes the bug that didn't allow us to open the html and forced us
+    # to use incognito mode in Chrome.
+    localStorage.clear();
+
     @objects = {}
 
   @property 'length',
