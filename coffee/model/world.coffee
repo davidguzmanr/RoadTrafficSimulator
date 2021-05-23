@@ -70,8 +70,15 @@ class World
         intersection = map[[x, y]]
         if intersection?
           if random() < 0.9
-            @addRoad new Road intersection, previous if previous?
-            @addRoad new Road previous, intersection if previous?
+            if previous != null
+              road1 = new Road intersection, previous
+              road2 = new Road previous, intersection
+
+              road1.oppositeRoad = road2
+              road2.oppositeRoad = road1
+
+              @addRoad road1
+              @addRoad road2
           previous = intersection
     for y in [minY..maxY]
       previous = null
@@ -79,8 +86,15 @@ class World
         intersection = map[[x, y]]
         if intersection?
           if random() < 0.9
-            @addRoad new Road intersection, previous if previous?
-            @addRoad new Road previous, intersection if previous?
+            if previous != null
+              road1 = new Road intersection, previous
+              road2 = new Road previous, intersection
+
+              road1.oppositeRoad = road2
+              road2.oppositeRoad = road1
+
+              @addRoad road1
+              @addRoad road2
           previous = intersection
     null
 
