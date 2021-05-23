@@ -53,7 +53,21 @@ class Trajectory
     nextLane = @car.nextLane
     sourceLane = @current.lane
     throw Error 'no road to enter' unless nextLane
-    turnNumber = sourceLane.getTurnDirection nextLane
+
+    # Gotta fix roads before calculating turnNumber, design failure by the original author
+
+    if sourceLane.road.target != nextLane.road.source
+      currentRoad = sourceLane.road
+      nextRoad = nextLane.road.oppositeRoad
+
+      if currentRoad.target != nextRoad.source
+        currentRoad = sourceLane.road.oppositeRoad
+        nextRoad = nextLane.road
+
+      turnNumber = currentRoad.getTurnDirection(nextRoad)
+    else
+      turnNumber = sourceLane.getTurnDirection(nextLane)
+
     throw Error 'no U-turns are allowed' if turnNumber is 3
     if turnNumber is 0 and not sourceLane.isLeftmost
       throw Error 'no left turns from this lane'
@@ -66,7 +80,41 @@ class Trajectory
     sourceLane = @current.lane
     return true unless nextLane
     intersection = @nextIntersection
-    turnNumber = sourceLane.getTurnDirection nextLane
+
+    # AKA 'invalid roads' error in getTurnDirection (nextLane or sourcelane changed direction since you picked it)
+    if sourceLane.road.target != nextLane.road.source
+      currentRoad = sourceLane.road
+      nextRoad = nextLane.road.oppositeRoad
+
+      if currentRoad.target != nextRoad.source
+        currentRoad = sourceLane.road.oppositeRoad;
+        nextRoad = nextLane.road;
+
+      turnNumber = currentRoad.getTurnDirection(nextRoad)
+
+      laneNumber = switch turnNumber
+        when 0
+          R = nextRoad.lanesNumber - 1
+          while nextRoad.lanes[R].isClosed
+            R -= 1
+          R # return R
+        when 1
+          R = _.random(0, nextRoad.lanesNumber - 1)
+          while nextRoad.lanes[R].isClosed
+            R = _.random(0, nextRoad.lanesNumber - 1)
+          R # return R pass
+        when 2
+          R = 0
+          while nextRoad.lanes[R].isClosed
+            R += 1
+          R # return
+
+      nextLane = nextRoad.lanes[R]
+      @car.nextLane = nextRoad.lanes[R]
+
+    else
+      turnNumber = sourceLane.getTurnDirection(nextLane)
+
     sideId = sourceLane.road.targetSideId
     intersection.controlSignals.state[sideId][turnNumber]
 
@@ -93,7 +141,8 @@ class Trajectory
       @next.acquire()
     if @isChangingLanes and tempRelativePosition >= 1
       @_finishChangingLanes()
-    if @current.lane and not @isChangingLanes and not @car.nextLane
+    # Comment-Mario: When picking next lane you already know the road to take (invariant) so you merely need to consider all OPEN lanes in said road
+    if (@car.nextLane and @car.nextLane.isClosed) or (@current.lane and not @isChangingLanes and not @car.nextLane)
       @car.pickNextLane()
 
   changeLane: (nextLane) ->
@@ -102,7 +151,8 @@ class Trajectory
     throw Error 'next lane == current lane' if nextLane is @lane
     throw Error 'not neighbouring lanes' unless @lane.road is nextLane.road
     nextPosition = @current.position + 3 * @car.length
-    throw Error 'too late to change lane' unless nextPosition < @lane.length
+    # TODO: What to do here? We will comment this for the moment (it will haunt us later)
+    # throw Error 'too late to change lane' unless nextPosition < @lane.length
     @_startChangingLanes nextLane, nextPosition
 
   _getIntersectionLaneChangeCurve: ->

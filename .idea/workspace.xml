@@ -5,15 +5,9 @@
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/coffee/app.coffee" beforeDir="false" afterPath="$PROJECT_DIR$/coffee/app.coffee" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/coffee/model/car.coffee" beforeDir="false" afterPath="$PROJECT_DIR$/coffee/model/car.coffee" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/coffee/model/lane.coffee" beforeDir="false" afterPath="$PROJECT_DIR$/coffee/model/lane.coffee" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/coffee/model/pool.coffee" beforeDir="false" afterPath="$PROJECT_DIR$/coffee/model/pool.coffee" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/coffee/model/road.coffee" beforeDir="false" afterPath="$PROJECT_DIR$/coffee/model/road.coffee" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/coffee/model/trajectory.coffee" beforeDir="false" afterPath="$PROJECT_DIR$/coffee/model/trajectory.coffee" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/coffee/model/world.coffee" beforeDir="false" afterPath="$PROJECT_DIR$/coffee/model/world.coffee" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/coffee/settings.coffee" beforeDir="false" afterPath="$PROJECT_DIR$/coffee/settings.coffee" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/coffee/visualizer/visualizer.coffee" beforeDir="false" afterPath="$PROJECT_DIR$/coffee/visualizer/visualizer.coffee" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/dist/main.js" beforeDir="false" afterPath="$PROJECT_DIR$/dist/main.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gulpfile.coffee" beforeDir="false" afterPath="$PROJECT_DIR$/gulpfile.coffee" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -39,7 +33,8 @@
   <component name="PropertiesComponent">
     <property name="RunOnceActivity.OpenProjectViewOnStart" value="true" />
     <property name="RunOnceActivity.ShowReadmeOnStart" value="true" />
-    <property name="last_opened_file_path" value="$PROJECT_DIR$/../RoadTrafficSimulator_src" />
+    <property name="com.intellij.ide.scratch.LRUPopupBuilder$1/New Scratch File" value="TEXT" />
+    <property name="last_opened_file_path" value="$PROJECT_DIR$/../RoadTrafficSimulator (copia)/dist/main.js" />
     <property name="run.code.analysis.last.selected.profile" value="aDefault" />
   </component>
   <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="application-level" UseSingleDictionary="true" transferred="true" />
@@ -58,7 +53,14 @@
       <option name="project" value="LOCAL" />
       <updated>1620054483870</updated>
     </task>
-    <option name="localTasksCounter" value="2" />
+    <task id="LOCAL-00002" summary="Put everything in the coffee scripts. car.coffee and trajectory.coffee are missing some changes to make changeNumberofLanes work">
+      <created>1621008287120</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1621008287120</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
   </component>
   <component name="UnknownFeatures">
@@ -67,6 +69,7 @@
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="Fix density in debug and bug in Chrome" />
-    <option name="LAST_COMMIT_MESSAGE" value="Fix density in debug and bug in Chrome" />
+    <MESSAGE value="Put everything in the coffee scripts. car.coffee and trajectory.coffee are missing some changes to make changeNumberofLanes work" />
+    <option name="LAST_COMMIT_MESSAGE" value="Put everything in the coffee scripts. car.coffee and trajectory.coffee are missing some changes to make changeNumberofLanes work" />
   </component>
 </project>

@@ -52,7 +52,11 @@ $(function() {
   guiVisualizer.add(visualizer, 'timeFactor', 0.1, 10).listen();
   guiWorld.add(world, 'carsNumber').min(0).max(200).step(1).listen();
   guiWorld.add(world, 'instantSpeed').step(0.00001).listen();
-  return gui.add(settings, 'lightsFlipInterval', 0, 400, 0.01).listen();
+  gui.add(settings, 'lightsFlipInterval', 0, 400, 0.01).listen();
+  gui.add(settings, 'lanesNumber').min(2).max(10).step(1).listen();
+  gui.add(settings, 'probCar').min(0).max(1).step(0.05).listen();
+  gui.add(settings, 'probBus').min(0).max(1).step(0.05).listen();
+  return gui.add(settings, 'probBike').min(0).max(1).step(0.05).listen();
 });
 
 
@@ -509,12 +513,74 @@ Car = (function() {
   };
 
   Car.prototype.move = function(delta) {
-    var acceleration, currentLane, preferedLane, step, turnNumber;
+    var R, acceleration, currentLane, currentRoad, laneNumber, nextRoad, preferedLane, step, turnNumber;
     acceleration = this.getAcceleration();
     this.speed += acceleration * delta;
     if (!this.trajectory.isChangingLanes && this.nextLane) {
       currentLane = this.trajectory.current.lane;
-      turnNumber = currentLane.getTurnDirection(this.nextLane);
+      currentRoad = this.trajectory.current.lane.road;
+      if (currentLane.road.target !== this.nextLane.road.source) {
+        currentRoad = currentLane.road;
+        nextRoad = this.nextLane.road.oppositeRoad;
+        if (currentRoad.target !== nextRoad.source) {
+          currentRoad = currentLane.road.oppositeRoad;
+          nextRoad = this.nextLane.road;
+        }
+        turnNumber = currentLane.getTurnDirection(this.nextLane);
+        laneNumber = (function() {
+          switch (turnNumber) {
+            case 0:
+              R = nextRoad.lanesNumber - 1;
+              while (nextRoad.lanes[R].isClosed) {
+                R -= 1;
+              }
+              return R;
+            case 1:
+              R = _.random(0, nextRoad.lanesNumber - 1);
+              while (nextRoad.lanes[R].isClosed) {
+                R = _.random(0, nextRoad.lanesNumber - 1);
+              }
+              return R;
+            case 2:
+              R = 0;
+              while (nextRoad.lanes[R].isClosed) {
+                R += 1;
+              }
+              return R;
+          }
+        })();
+        this.nextLane = nextRoad.lanes[R];
+        this.trajectory.nextLane = nextRoad.lanes[R];
+      } else if (this.nextLane.isClosed) {
+        nextRoad = this.nextLane.road;
+        turnNumber = currentRoad.getTurnDirection(nextRoad);
+        laneNumber = (function() {
+          switch (turnNumber) {
+            case 0:
+              R = nextRoad.lanesNumber - 1;
+              while (nextRoad.lanes[R].isClosed) {
+                R -= 1;
+              }
+              return R;
+            case 1:
+              R = _.random(0, nextRoad.lanesNumber - 1);
+              while (nextRoad.lanes[R].isClosed) {
+                R = _.random(0, nextRoad.lanesNumber - 1);
+              }
+              return R;
+            case 2:
+              R = 0;
+              while (nextRoad.lanes[R].isClosed) {
+                R += 1;
+              }
+              return R;
+          }
+        })();
+        this.nextLane = nextRoad.lanes[R];
+        this.trajectory.nextLane = nextRoad.lanes[R];
+      } else {
+        turnNumber = currentLane.getTurnDirection(this.nextLane);
+      }
       preferedLane = (function() {
         switch (turnNumber) {
           case 0:
@@ -555,10 +621,7 @@ Car = (function() {
   };
 
   Car.prototype.pickNextLane = function() {
-    var laneNumber, nextRoad, turnNumber;
-    if (this.nextLane) {
-      throw Error('next lane is already chosen');
-    }
+    var R, laneNumber, nextRoad, turnNumber;
     this.nextLane = null;
     nextRoad = this.pickNextRoad();
     if (!nextRoad) {
@@ -568,11 +631,23 @@ Car = (function() {
     laneNumber = (function() {
       switch (turnNumber) {
         case 0:
-          return nextRoad.lanesNumber - 1;
+          R = nextRoad.lanesNumber - 1;
+          while (nextRoad.lanes[R].isClosed) {
+            R -= 1;
+          }
+          return R;
         case 1:
-          return _.random(0, nextRoad.lanesNumber - 1);
+          R = _.random(0, nextRoad.lanesNumber - 1);
+          while (nextRoad.lanes[R].isClosed) {
+            R = _.random(0, nextRoad.lanesNumber - 1);
+          }
+          return R;
         case 2:
-          return 0;
+          R = 0;
+          while (nextRoad.lanes[R].isClosed) {
+            R += 1;
+          }
+          return R;
       }
     })();
     this.nextLane = nextRoad.lanes[laneNumber];
@@ -931,7 +1006,7 @@ Lane = (function() {
     if (this.isClosed === false) {
       return true;
     }
-    if (true) {
+    if (this.carsDependent === 0) {
       road.lanesNumber -= 1;
       road.lanes = road.lanes.slice(0, road.lanesNumber);
       road.update(road.lanesNumber);
@@ -1293,13 +1368,23 @@ Trajectory = (function() {
   });
 
   Trajectory.prototype.isValidTurn = function() {
-    var nextLane, sourceLane, turnNumber;
+    var currentRoad, nextLane, nextRoad, sourceLane, turnNumber;
     nextLane = this.car.nextLane;
     sourceLane = this.current.lane;
     if (!nextLane) {
       throw Error('no road to enter');
     }
-    turnNumber = sourceLane.getTurnDirection(nextLane);
+    if (sourceLane.road.target !== nextLane.road.source) {
+      currentRoad = sourceLane.road;
+      nextRoad = nextLane.road.oppositeRoad;
+      if (currentRoad.target !== nextRoad.source) {
+        currentRoad = sourceLane.road.oppositeRoad;
+        nextRoad = nextLane.road;
+      }
+      turnNumber = currentRoad.getTurnDirection(nextRoad);
+    } else {
+      turnNumber = sourceLane.getTurnDirection(nextLane);
+    }
     if (turnNumber === 3) {
       throw Error('no U-turns are allowed');
     }
@@ -1313,14 +1398,48 @@ Trajectory = (function() {
   };
 
   Trajectory.prototype.canEnterIntersection = function() {
-    var intersection, nextLane, sideId, sourceLane, turnNumber;
+    var R, currentRoad, intersection, laneNumber, nextLane, nextRoad, sideId, sourceLane, turnNumber;
     nextLane = this.car.nextLane;
     sourceLane = this.current.lane;
     if (!nextLane) {
       return true;
     }
     intersection = this.nextIntersection;
-    turnNumber = sourceLane.getTurnDirection(nextLane);
+    if (sourceLane.road.target !== nextLane.road.source) {
+      currentRoad = sourceLane.road;
+      nextRoad = nextLane.road.oppositeRoad;
+      if (currentRoad.target !== nextRoad.source) {
+        currentRoad = sourceLane.road.oppositeRoad;
+        nextRoad = nextLane.road;
+      }
+      turnNumber = currentRoad.getTurnDirection(nextRoad);
+      laneNumber = (function() {
+        switch (turnNumber) {
+          case 0:
+            R = nextRoad.lanesNumber - 1;
+            while (nextRoad.lanes[R].isClosed) {
+              R -= 1;
+            }
+            return R;
+          case 1:
+            R = _.random(0, nextRoad.lanesNumber - 1);
+            while (nextRoad.lanes[R].isClosed) {
+              R = _.random(0, nextRoad.lanesNumber - 1);
+            }
+            return R;
+          case 2:
+            R = 0;
+            while (nextRoad.lanes[R].isClosed) {
+              R += 1;
+            }
+            return R;
+        }
+      })();
+      nextLane = nextRoad.lanes[R];
+      this.car.nextLane = nextRoad.lanes[R];
+    } else {
+      turnNumber = sourceLane.getTurnDirection(nextLane);
+    }
     sideId = sourceLane.road.targetSideId;
     return intersection.controlSignals.state[sideId][turnNumber];
   };
@@ -1362,7 +1481,7 @@ Trajectory = (function() {
     if (this.isChangingLanes && tempRelativePosition >= 1) {
       this._finishChangingLanes();
     }
-    if (this.current.lane && !this.isChangingLanes && !this.car.nextLane) {
+    if ((this.car.nextLane && this.car.nextLane.isClosed) || (this.current.lane && !this.isChangingLanes && !this.car.nextLane)) {
       return this.car.pickNextLane();
     }
   };
@@ -1382,9 +1501,6 @@ Trajectory = (function() {
       throw Error('not neighbouring lanes');
     }
     nextPosition = this.current.position + 3 * this.car.length;
-    if (!(nextPosition < this.lane.length)) {
-      throw Error('too late to change lane');
-    }
     return this._startChangingLanes(nextLane, nextPosition);
   };
 

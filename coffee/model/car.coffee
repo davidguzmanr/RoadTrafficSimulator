@@ -102,7 +102,67 @@ class Car
 
     if not @trajectory.isChangingLanes and @nextLane
       currentLane = @trajectory.current.lane
-      turnNumber = currentLane.getTurnDirection @nextLane
+      currentRoad = @trajectory.current.lane.road
+
+      # If the lane you were going towards changed direction
+      if currentLane.road.target != @nextLane.road.source
+        currentRoad = currentLane.road;
+        nextRoad = @nextLane.road.oppositeRoad
+
+        if currentRoad.target != nextRoad.source
+          currentRoad = currentLane.road.oppositeRoad
+          nextRoad = @nextLane.road
+
+        turnNumber = currentLane.getTurnDirection @nextLane
+
+        laneNumber = switch turnNumber
+          when 0
+            R = nextRoad.lanesNumber - 1
+            while nextRoad.lanes[R].isClosed
+              R -= 1
+            R # return R
+          when 1
+            R = _.random(0, nextRoad.lanesNumber - 1)
+            while nextRoad.lanes[R].isClosed
+              R = _.random(0, nextRoad.lanesNumber - 1)
+            R # return R pass
+          when 2
+            R = 0
+            while nextRoad.lanes[R].isClosed
+              R += 1
+            R # return
+
+        @nextLane = nextRoad.lanes[R]
+        @trajectory.nextLane = nextRoad.lanes[R]
+
+      # IDK if this will happen, just covering my bases
+      else if @nextLane.isClosed
+        nextRoad = @nextLane.road
+        turnNumber = currentRoad.getTurnDirection(nextRoad)
+
+        laneNumber = switch turnNumber
+          when 0
+            R = nextRoad.lanesNumber - 1
+            while nextRoad.lanes[R].isClosed
+              R -= 1
+            R # return R
+          when 1
+            R = _.random(0, nextRoad.lanesNumber - 1)
+            while nextRoad.lanes[R].isClosed
+              R = _.random(0, nextRoad.lanesNumber - 1)
+            R # return R pass
+          when 2
+            R = 0
+            while nextRoad.lanes[R].isClosed
+              R += 1
+            R # return
+
+        @nextLane = nextRoad.lanes[R]
+        @trajectory.nextLane = nextRoad.lanes[R]
+
+      else
+        turnNumber = currentLane.getTurnDirection(@nextLane)
+
       preferedLane = switch turnNumber
         when 0 then currentLane.leftmostAdjacent
         when 2 then currentLane.rightmostAdjacent
@@ -126,17 +186,38 @@ class Car
     return null if possibleRoads.length is 0
     nextRoad = _.sample possibleRoads
 
+  
   pickNextLane: ->
-    throw Error 'next lane is already chosen' if @nextLane
+#     throw Error 'next lane is already chosen' if @nextLane
     @nextLane = null
     nextRoad = @pickNextRoad()
     return null if not nextRoad
     # throw Error 'can not pick next road' if not nextRoad
-    turnNumber = @trajectory.current.lane.road.getTurnDirection nextRoad
+    turnNumber = @trajectory.current.lane.road.getTurnDirection nextRoad # Calculate turn direction (which road to go to)
+
+    # asignar_entero(rbeta(parametros varian dependiendo de a donde quieras ir))
     laneNumber = switch turnNumber
-      when 0 then nextRoad.lanesNumber - 1
-      when 1 then _.random 0, nextRoad.lanesNumber - 1
-      when 2 then 0
+      when 0
+        R = nextRoad.lanesNumber - 1
+        while nextRoad.lanes[R].isClosed
+          R -= 1
+        R # return R
+      when 1
+        R = _.random(0, nextRoad.lanesNumber - 1)
+        while nextRoad.lanes[R].isClosed
+          R = _.random(0, nextRoad.lanesNumber - 1)
+        R # return R pass
+      when 2
+        R = 0
+        while nextRoad.lanes[R].isClosed
+          R += 1
+        R # return
+
+#     laneNumber = switch turnNumber
+#       when 0 then nextRoad.lanesNumber - 1
+#       when 1 then _.random 0, nextRoad.lanesNumber - 1
+#       when 2 then 0
+
     @nextLane = nextRoad.lanes[laneNumber]
     throw Error 'can not pick next lane' if not @nextLane
     return @nextLane

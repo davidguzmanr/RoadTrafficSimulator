@@ -41,3 +41,7 @@ $ ->
   guiWorld.add(world, 'carsNumber').min(0).max(200).step(1).listen()
   guiWorld.add(world, 'instantSpeed').step(0.00001).listen()
   gui.add(settings, 'lightsFlipInterval', 0, 400, 0.01).listen()
+  gui.add(settings, 'lanesNumber').min(2).max(10).step(1).listen()
+  gui.add(settings, 'probCar').min(0).max(1).step(0.05).listen()
+  gui.add(settings, 'probBus').min(0).max(1).step(0.05).listen()
+  gui.add(settings, 'probBike').min(0).max(1).step(0.05).listen()
