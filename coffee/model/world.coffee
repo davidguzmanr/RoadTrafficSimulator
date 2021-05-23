@@ -147,6 +147,7 @@ class World
     return
 
   clear: ->
+    localStorage.clear()
     @set {}
 
   onTick: (delta) =>

@@ -1662,7 +1662,7 @@ World = (function() {
   };
 
   World.prototype.generateMap = function(minX, maxX, minY, maxY) {
-    var gridSize, intersection, intersectionsNumber, map, previous, rect, step, x, y, _i, _j, _k, _l;
+    var gridSize, intersection, intersectionsNumber, map, previous, rect, road1, road2, step, x, y, _i, _j, _k, _l;
     if (minX == null) {
       minX = -2;
     }
@@ -1698,11 +1698,13 @@ World = (function() {
         intersection = map[[x, y]];
         if (intersection != null) {
           if (random() < 0.9) {
-            if (previous != null) {
-              this.addRoad(new Road(intersection, previous));
-            }
-            if (previous != null) {
-              this.addRoad(new Road(previous, intersection));
+            if (previous !== null) {
+              road1 = new Road(intersection, previous);
+              road2 = new Road(previous, intersection);
+              road1.oppositeRoad = road2;
+              road2.oppositeRoad = road1;
+              this.addRoad(road1);
+              this.addRoad(road2);
             }
           }
           previous = intersection;
@@ -1715,11 +1717,13 @@ World = (function() {
         intersection = map[[x, y]];
         if (intersection != null) {
           if (random() < 0.9) {
-            if (previous != null) {
-              this.addRoad(new Road(intersection, previous));
-            }
-            if (previous != null) {
-              this.addRoad(new Road(previous, intersection));
+            if (previous !== null) {
+              road1 = new Road(intersection, previous);
+              road2 = new Road(previous, intersection);
+              road1.oppositeRoad = road2;
+              road2.oppositeRoad = road1;
+              this.addRoad(road1);
+              this.addRoad(road2);
             }
           }
           previous = intersection;
@@ -1743,6 +1747,7 @@ World = (function() {
   World.prototype.StopRoad = function() {};
 
   World.prototype.clear = function() {
+    localStorage.clear();
     return this.set({});
   };
 
