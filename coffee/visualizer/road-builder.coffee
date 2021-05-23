@@ -34,6 +34,8 @@ class ToolRoadBuilder extends Tool
       else
         @road = new Road @sourceIntersection, hoveredIntersection
         @dualRoad = new Road hoveredIntersection, @sourceIntersection
+        @road.oppositeRoad = @dualRoad
+        @dualRoad.oppositeRoad = @road
     else
       @road = @dualRoad = null
 

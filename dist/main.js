@@ -1544,7 +1544,10 @@ Trajectory = (function() {
       throw Error('no lane changing is going on');
     }
     this.isChangingLanes = false;
+    this.current.lane.carsDependent -= 1;
+    this.current.lane.tryOpen();
     this.current.lane = this.next.lane;
+    this.current.lane.carsDependent += 1;
     this.current.position = this.next.position || 0;
     this.current.acquire();
     this.next.lane = null;
@@ -2382,7 +2385,9 @@ ToolRoadBuilder = (function(_super) {
         return this.dualRoad.source = hoveredIntersection;
       } else {
         this.road = new Road(this.sourceIntersection, hoveredIntersection);
-        return this.dualRoad = new Road(hoveredIntersection, this.sourceIntersection);
+        this.dualRoad = new Road(hoveredIntersection, this.sourceIntersection);
+        this.road.oppositeRoad = this.dualRoad;
+        return this.dualRoad.oppositeRoad = this.road;
       }
     } else {
       return this.road = this.dualRoad = null;
@@ -2638,6 +2643,10 @@ Visualizer = (function() {
       this.ctx.lineDashOffset = 1.5 * dashSize;
       this.ctx.setLineDash([dashSize]);
       this.graphics.stroke(settings.colors.roadMarking);
+      if (lane.isClosed) {
+        this.graphics.polyline(lane.sourceSegment.source, lane.sourceSegment.target, lane.targetSegment.source, lane.targetSegment.target);
+        this.graphics.fill('red', 0.2);
+      }
     }
     if (this.debug) {
       this.ctx.save();

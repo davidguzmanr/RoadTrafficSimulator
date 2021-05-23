@@ -187,8 +187,13 @@ class Trajectory
   _finishChangingLanes: ->
     throw Error 'no lane changing is going on' unless @isChangingLanes
     @isChangingLanes = false
-    # TODO swap current and next
+    # Swap
+    @current.lane.carsDependent -= 1
+    @current.lane.tryOpen()
+
     @current.lane = @next.lane
+    @current.lane.carsDependent += 1
+
     @current.position = @next.position or 0
     @current.acquire()
     @next.lane = null

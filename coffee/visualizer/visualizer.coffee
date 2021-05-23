@@ -125,8 +125,11 @@ class Visualizer
       @ctx.lineDashOffset = 1.5 * dashSize
       @ctx.setLineDash [dashSize]
       @graphics.stroke settings.colors.roadMarking
-
-    # Comment-Mario: draw closed lanes as RED
+      # Comment-Mario: draw closed lanes as RED
+      if lane.isClosed
+        @graphics.polyline(lane.sourceSegment.source, lane.sourceSegment.target, lane.targetSegment.source, lane.targetSegment.target)
+        @graphics.fill('red', 0.2)
+    
     # Falta completar lane.coffee
 
     # Comment-David: This add the road-id and number of lanes to the debug feature
