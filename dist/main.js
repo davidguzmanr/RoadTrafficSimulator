@@ -623,9 +623,11 @@ Car = (function() {
           a = 1.0;
           b = 1.0;
         } else if (__indexOf.call(possibleTurns, 1) < 0) {
-          b = 2.0;
+          a = 5.0;
+          b = 1.0;
         } else if (__indexOf.call(possibleTurns, 2) < 0) {
-          b = 4.0;
+          a = 5.0;
+          b = 2.0;
         }
         break;
       case 1:
@@ -635,9 +637,11 @@ Car = (function() {
           a = 1.0;
           b = 1.0;
         } else if (__indexOf.call(possibleTurns, 0) < 0) {
-          a = 2.0;
+          a = 1.0;
+          b = 5.0;
         } else if (__indexOf.call(possibleTurns, 2) < 0) {
-          b = 2.0;
+          a = 5.0;
+          b = 1.0;
         }
         break;
       case 2:
@@ -647,9 +651,11 @@ Car = (function() {
           a = 1.0;
           b = 1.0;
         } else if (__indexOf.call(possibleTurns, 0) < 0) {
-          a = 4.0;
-        } else if (__indexOf.call(possibleTurns, 1) < 0) {
           a = 2.0;
+          b = 5.0;
+        } else if (__indexOf.call(possibleTurns, 1) < 0) {
+          a = 1.0;
+          b = 5.0;
         }
     }
     laneNumber = Math.round(beta(a, b) * (road.lanesNumber - 1));

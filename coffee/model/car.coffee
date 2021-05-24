@@ -208,9 +208,11 @@ class Car
           a = 1.0
           b = 1.0
         else if 1 not in possibleTurns#I can go left and straight
-          b = 2.0
+          a = 5.0
+          b = 1.0
         else if 2 not in possibleTurns#I can go left and right
-          b = 4.0
+          a = 5.0
+          b = 2.0
       when 1#If I want to go straight
         a = 5.0
         b = 5.0
@@ -218,9 +220,11 @@ class Car
           a = 1.0
           b = 1.0
         else if 0 not in possibleTurns#I can go straight and left
-          a = 2.0
+          a = 1.0
+          b = 5.0
         else if 2 not in possibleTurns#I can go straight and right
-          b = 2.0
+          a = 5.0
+          b = 1.0
       when 2 #If I want to go right
         a = 4.0
         b = 1.0
@@ -228,9 +232,11 @@ class Car
           a = 1.0
           b = 1.0
         else if 0 not in possibleTurns#I can go right and left
-          a = 4.0
-        else if 1 not in possibleTurns#I can go right and straight.
           a = 2.0
+          b = 5.0
+        else if 1 not in possibleTurns#I can go right and straight.
+          a = 1.0
+          b = 5.0
     laneNumber = Math.round(beta(a, b) * (road.lanesNumber - 1))
     while road.lanes[laneNumber].isClosed
       laneNumber = Math.round(beta(a, b) * (road.lanesNumber - 1))
