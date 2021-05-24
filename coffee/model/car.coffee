@@ -200,7 +200,7 @@ class Car
 
   chooseLaneNumber: (turnNumber, road) ->
     possibleTurns = @getPossibleTurns()
-    laneNumber = switch turnNumber
+    switch turnNumber
       when 0
         a = 1.0
         b = 4.0
@@ -211,10 +211,6 @@ class Car
           b = 2.0
         else if 2 not in possibleTurns
           b = 4.0
-        R = Math.round(beta(a, b) * (road.lanesNumber - 1))
-        while road.lanes[R].isClosed
-          R = Math.round(beta(a, b) * (road.lanesNumber - 1))
-        R # return R
       when 1
         a = 5.0
         b = 5.0
@@ -225,10 +221,6 @@ class Car
           a = 2.0
         else if 2 not in possibleTurns
           b = 2.0
-        R = Math.round(beta(a, b) * (road.lanesNumber - 1))
-        while road.lanes[R].isClosed
-          R = Math.round(beta(a, b) * (road.lanesNumber - 1))
-         R # return R pass
       when 2
         a = 4.0
         b = 1.0
@@ -239,10 +231,9 @@ class Car
           a = 4.0
         else if 1 not in possibleTurns
           a = 2.0
-        R = Math.round(beta(a, b) * (road.lanesNumber - 1))
-        while road.lanes[R].isClosed
-         R = Math.round(beta(a, b) * (road.lanesNumber - 1))
-        R # return
+    laneNumber = Math.round(beta(a, b) * (road.lanesNumber - 1))
+    while road.lanes[laneNumber].isClosed
+      laneNumber = Math.round(beta(a, b) * (road.lanesNumber - 1))
     return laneNumber
 
 

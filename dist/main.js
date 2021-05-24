@@ -613,60 +613,49 @@ Car = (function() {
   };
 
   Car.prototype.chooseLaneNumber = function(turnNumber, road) {
-    var R, a, b, laneNumber, possibleTurns;
+    var a, b, laneNumber, possibleTurns;
     possibleTurns = this.getPossibleTurns();
-    laneNumber = (function() {
-      switch (turnNumber) {
-        case 0:
+    switch (turnNumber) {
+      case 0:
+        a = 1.0;
+        b = 4.0;
+        if (__indexOf.call(possibleTurns, 1) < 0 && __indexOf.call(possibleTurns, 2) < 0) {
           a = 1.0;
-          b = 4.0;
-          if (__indexOf.call(possibleTurns, 1) < 0 && __indexOf.call(possibleTurns, 2) < 0) {
-            a = 1.0;
-            b = 1.0;
-          } else if (__indexOf.call(possibleTurns, 1) < 0) {
-            b = 2.0;
-          } else if (__indexOf.call(possibleTurns, 2) < 0) {
-            b = 4.0;
-          }
-          R = Math.round(beta(a, b) * (road.lanesNumber - 1));
-          while (road.lanes[R].isClosed) {
-            R = Math.round(beta(a, b) * (road.lanesNumber - 1));
-          }
-          return R;
-        case 1:
-          a = 5.0;
-          b = 5.0;
-          if (__indexOf.call(possibleTurns, 0) < 0 && __indexOf.call(possibleTurns, 2) < 0) {
-            a = 1.0;
-            b = 1.0;
-          } else if (__indexOf.call(possibleTurns, 0) < 0) {
-            a = 2.0;
-          } else if (__indexOf.call(possibleTurns, 2) < 0) {
-            b = 2.0;
-          }
-          R = Math.round(beta(a, b) * (road.lanesNumber - 1));
-          while (road.lanes[R].isClosed) {
-            R = Math.round(beta(a, b) * (road.lanesNumber - 1));
-          }
-          return R;
-        case 2:
-          a = 4.0;
           b = 1.0;
-          if (__indexOf.call(possibleTurns, 0) < 0 && __indexOf.call(possibleTurns, 1) < 0) {
-            a = 1.0;
-            b = 1.0;
-          } else if (__indexOf.call(possibleTurns, 0) < 0) {
-            a = 4.0;
-          } else if (__indexOf.call(possibleTurns, 1) < 0) {
-            a = 2.0;
-          }
-          R = Math.round(beta(a, b) * (road.lanesNumber - 1));
-          while (road.lanes[R].isClosed) {
-            R = Math.round(beta(a, b) * (road.lanesNumber - 1));
-          }
-          return R;
-      }
-    })();
+        } else if (__indexOf.call(possibleTurns, 1) < 0) {
+          b = 2.0;
+        } else if (__indexOf.call(possibleTurns, 2) < 0) {
+          b = 4.0;
+        }
+        break;
+      case 1:
+        a = 5.0;
+        b = 5.0;
+        if (__indexOf.call(possibleTurns, 0) < 0 && __indexOf.call(possibleTurns, 2) < 0) {
+          a = 1.0;
+          b = 1.0;
+        } else if (__indexOf.call(possibleTurns, 0) < 0) {
+          a = 2.0;
+        } else if (__indexOf.call(possibleTurns, 2) < 0) {
+          b = 2.0;
+        }
+        break;
+      case 2:
+        a = 4.0;
+        b = 1.0;
+        if (__indexOf.call(possibleTurns, 0) < 0 && __indexOf.call(possibleTurns, 1) < 0) {
+          a = 1.0;
+          b = 1.0;
+        } else if (__indexOf.call(possibleTurns, 0) < 0) {
+          a = 4.0;
+        } else if (__indexOf.call(possibleTurns, 1) < 0) {
+          a = 2.0;
+        }
+    }
+    laneNumber = Math.round(beta(a, b) * (road.lanesNumber - 1));
+    while (road.lanes[laneNumber].isClosed) {
+      laneNumber = Math.round(beta(a, b) * (road.lanesNumber - 1));
+    }
     return laneNumber;
   };
 
