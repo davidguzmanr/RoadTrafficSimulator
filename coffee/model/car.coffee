@@ -175,7 +175,7 @@ class Car
     return null if not nextRoad
     # throw Error 'can not pick next road' if not nextRoad
     turnNumber = @trajectory.current.lane.road.getTurnDirection nextRoad # Calculate turn direction (which road to go to)
-
+    
     laneNumber = @chooseLaneNumber(turnNumber, nextRoad)
 
     @nextLane = nextRoad.lanes[laneNumber]
@@ -199,14 +199,23 @@ class Car
     return possibleTurns
 
   chooseLaneNumber: (turnNumber, road) ->
+    possibleTurns = @getPossibleTurns()
     laneNumber = switch turnNumber
       when 0
-        R = Math.round(beta(1.0, 4.0) * (road.lanesNumber - 1))
+        a = 1.0
+        b = 4.0
+        if( 1 not in possibleTurns and 2 not in possibleTurns)
+          a = 1.0
+          b = 1.0
+        else if 1 not in possibleTurns
+          b = 2.0
+        else if 2 not in possibleTurns
+          b = 4.0
+        R = Math.round(beta(a, b) * (road.lanesNumber - 1))
         while road.lanes[R].isClosed
-          R = Math.round(beta(1.0, 4.0) * (road.lanesNumber - 1))
+          R = Math.round(beta(a, b) * (road.lanesNumber - 1))
         R # return R
       when 1
-        possibleTurns = @getPossibleTurns()
         a = 5.0
         b = 5.0
         if( 0 not in possibleTurns and 2 not in possibleTurns)
@@ -214,16 +223,25 @@ class Car
           b = 1.0
         else if 0 not in possibleTurns
           a = 2.0
-        else 
+        else if 2 not in possibleTurns
           b = 2.0
         R = Math.round(beta(a, b) * (road.lanesNumber - 1))
         while road.lanes[R].isClosed
           R = Math.round(beta(a, b) * (road.lanesNumber - 1))
          R # return R pass
       when 2
-        R = Math.round(beta(4.0, 1.0) * (road.lanesNumber - 1))
+        a = 4.0
+        b = 1.0
+        if( 0 not in possibleTurns and 1 not in possibleTurns)
+          a = 1.0
+          b = 1.0
+        else if 0 not in possibleTurns
+          a = 4.0
+        else if 1 not in possibleTurns
+          a = 2.0
+        R = Math.round(beta(a, b) * (road.lanesNumber - 1))
         while road.lanes[R].isClosed
-         R = Math.round(beta(4.0, 1.0) * (road.lanesNumber - 1))
+         R = Math.round(beta(a, b) * (road.lanesNumber - 1))
         R # return
     return laneNumber
 

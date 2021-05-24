@@ -614,16 +614,26 @@ Car = (function() {
 
   Car.prototype.chooseLaneNumber = function(turnNumber, road) {
     var R, a, b, laneNumber, possibleTurns;
+    possibleTurns = this.getPossibleTurns();
     laneNumber = (function() {
       switch (turnNumber) {
         case 0:
-          R = Math.round(beta(1.0, 4.0) * (road.lanesNumber - 1));
+          a = 1.0;
+          b = 4.0;
+          if (__indexOf.call(possibleTurns, 1) < 0 && __indexOf.call(possibleTurns, 2) < 0) {
+            a = 1.0;
+            b = 1.0;
+          } else if (__indexOf.call(possibleTurns, 1) < 0) {
+            b = 2.0;
+          } else if (__indexOf.call(possibleTurns, 2) < 0) {
+            b = 4.0;
+          }
+          R = Math.round(beta(a, b) * (road.lanesNumber - 1));
           while (road.lanes[R].isClosed) {
-            R = Math.round(beta(1.0, 4.0) * (road.lanesNumber - 1));
+            R = Math.round(beta(a, b) * (road.lanesNumber - 1));
           }
           return R;
         case 1:
-          possibleTurns = this.getPossibleTurns();
           a = 5.0;
           b = 5.0;
           if (__indexOf.call(possibleTurns, 0) < 0 && __indexOf.call(possibleTurns, 2) < 0) {
@@ -631,7 +641,7 @@ Car = (function() {
             b = 1.0;
           } else if (__indexOf.call(possibleTurns, 0) < 0) {
             a = 2.0;
-          } else {
+          } else if (__indexOf.call(possibleTurns, 2) < 0) {
             b = 2.0;
           }
           R = Math.round(beta(a, b) * (road.lanesNumber - 1));
@@ -640,13 +650,23 @@ Car = (function() {
           }
           return R;
         case 2:
-          R = Math.round(beta(4.0, 1.0) * (road.lanesNumber - 1));
+          a = 4.0;
+          b = 1.0;
+          if (__indexOf.call(possibleTurns, 0) < 0 && __indexOf.call(possibleTurns, 1) < 0) {
+            a = 1.0;
+            b = 1.0;
+          } else if (__indexOf.call(possibleTurns, 0) < 0) {
+            a = 4.0;
+          } else if (__indexOf.call(possibleTurns, 1) < 0) {
+            a = 2.0;
+          }
+          R = Math.round(beta(a, b) * (road.lanesNumber - 1));
           while (road.lanes[R].isClosed) {
-            R = Math.round(beta(4.0, 1.0) * (road.lanesNumber - 1));
+            R = Math.round(beta(a, b) * (road.lanesNumber - 1));
           }
           return R;
       }
-    }).call(this);
+    })();
     return laneNumber;
   };
 
@@ -1402,7 +1422,7 @@ Trajectory = (function() {
         nextRoad = nextLane.road;
       }
       turnNumber = currentRoad.getTurnDirection(nextRoad);
-      laneNumber = this.car.chooseLaneNumber(turnNumber, nextRoad);
+      laneNumber = this.car.chooseLaneNumber(turnNumber, currentRoad);
       nextLane = nextRoad.lanes[laneNumber];
       this.car.nextLane = nextRoad.lanes[laneNumber];
     } else {

@@ -94,7 +94,7 @@ class Trajectory
 
       turnNumber = currentRoad.getTurnDirection(nextRoad)
       
-      laneNumber = @car.chooseLaneNumber(turnNumber, nextRoad)
+      laneNumber = @car.chooseLaneNumber(turnNumber, currentRoad)
 
       nextLane = nextRoad.lanes[laneNumber]
       @car.nextLane = nextRoad.lanes[laneNumber]
