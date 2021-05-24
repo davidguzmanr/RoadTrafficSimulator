@@ -194,7 +194,7 @@ class Car
 
     possibleRoads = intersection.roads.filter (x) -> x.target != currentLane.road.source
 
-    possibleTurns = possibleRoads.map (o) -> @current.lane.road.getTurnDirection(o)
+    possibleTurns = possibleRoads.map (o) -> currentLane.road.getTurnDirection(o)
       
     return possibleTurns
 
@@ -206,9 +206,19 @@ class Car
           R = Math.round(beta(1.0, 4.0) * (road.lanesNumber - 1))
         R # return R
       when 1
-        R = Math.round(beta(5.0, 5.0) * (road.lanesNumber - 1))
+        possibleTurns = @getPossibleTurns()
+        a = 5.0
+        b = 5.0
+        if( 0 not in possibleTurns and 2 not in possibleTurns)
+          a = 1.0
+          b = 1.0
+        else if 0 not in possibleTurns
+          a = 2.0
+        else 
+          b = 2.0
+        R = Math.round(beta(a, b) * (road.lanesNumber - 1))
         while road.lanes[R].isClosed
-          R = Math.round(beta(5.0, 5.0) * (road.lanesNumber - 1))
+          R = Math.round(beta(a, b) * (road.lanesNumber - 1))
          R # return R pass
       when 2
         R = Math.round(beta(4.0, 1.0) * (road.lanesNumber - 1))

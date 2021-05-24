@@ -399,7 +399,8 @@ Function.prototype.property = function(prop, desc) {
 
 },{}],7:[function(require,module,exports){
 'use strict';
-var Car, Trajectory, beta, max, min, random, settings, sqrt, _;
+var Car, Trajectory, beta, max, min, random, settings, sqrt, _,
+  __indexOf = [].indexOf || function(item) { for (var i = 0, l = this.length; i < l; i++) { if (i in this && this[i] === item) return i; } return -1; };
 
 max = Math.max, min = Math.min, random = Math.random, sqrt = Math.sqrt;
 
@@ -606,13 +607,13 @@ Car = (function() {
       return x.target !== currentLane.road.source;
     });
     possibleTurns = possibleRoads.map(function(o) {
-      return this.current.lane.road.getTurnDirection(o);
+      return currentLane.road.getTurnDirection(o);
     });
     return possibleTurns;
   };
 
   Car.prototype.chooseLaneNumber = function(turnNumber, road) {
-    var R, laneNumber;
+    var R, a, b, laneNumber, possibleTurns;
     laneNumber = (function() {
       switch (turnNumber) {
         case 0:
@@ -622,9 +623,20 @@ Car = (function() {
           }
           return R;
         case 1:
-          R = Math.round(beta(5.0, 5.0) * (road.lanesNumber - 1));
+          possibleTurns = this.getPossibleTurns();
+          a = 5.0;
+          b = 5.0;
+          if (__indexOf.call(possibleTurns, 0) < 0 && __indexOf.call(possibleTurns, 2) < 0) {
+            a = 1.0;
+            b = 1.0;
+          } else if (__indexOf.call(possibleTurns, 0) < 0) {
+            a = 2.0;
+          } else {
+            b = 2.0;
+          }
+          R = Math.round(beta(a, b) * (road.lanesNumber - 1));
           while (road.lanes[R].isClosed) {
-            R = Math.round(beta(5.0, 5.0) * (road.lanesNumber - 1));
+            R = Math.round(beta(a, b) * (road.lanesNumber - 1));
           }
           return R;
         case 2:
@@ -634,7 +646,7 @@ Car = (function() {
           }
           return R;
       }
-    })();
+    }).call(this);
     return laneNumber;
   };
 
