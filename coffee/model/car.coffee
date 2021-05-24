@@ -203,40 +203,40 @@ class Car
     switch turnNumber
       when 0#If I want to turn left
         a = 1.0
-        b = 4.0
+        b = 5.0
         if( 1 not in possibleTurns and 2 not in possibleTurns) #I can only go left
           a = 1.0
           b = 1.0
-        else if 1 not in possibleTurns#I can go left and straight
-          a = 5.0
+        else if 2 not in possibleTurns#I can go left and straight
+          a = 10.0
           b = 1.0
-        else if 2 not in possibleTurns#I can go left and right
-          a = 5.0
-          b = 2.0
+        else if 1 not in possibleTurns#I can go left and right
+          a = 10.0
+          b = 1.0
       when 1#If I want to go straight
-        a = 5.0
-        b = 5.0
+        a = 30.0
+        b = 30.0
         if( 0 not in possibleTurns and 2 not in possibleTurns)#I can only go straight
           a = 1.0
           b = 1.0
-        else if 0 not in possibleTurns#I can go straight and left
+        else if 2 not in possibleTurns#I can go straight and left
           a = 1.0
-          b = 5.0
-        else if 2 not in possibleTurns#I can go straight and right
-          a = 5.0
+          b = 10.0
+        else if 0 not in possibleTurns#I can go straight and right
+          a = 10.0
           b = 1.0
       when 2 #If I want to go right
-        a = 4.0
+        a = 5.0
         b = 1.0
         if( 0 not in possibleTurns and 1 not in possibleTurns)#I can only go right
           a = 1.0
           b = 1.0
-        else if 0 not in possibleTurns#I can go right and left
-          a = 2.0
-          b = 5.0
-        else if 1 not in possibleTurns#I can go right and straight.
+        else if 1 not in possibleTurns#I can go right and left
           a = 1.0
-          b = 5.0
+          b = 10.0
+        else if 0 not in possibleTurns#I can go right and straight.
+          a = 1.0
+          b = 10.0
     laneNumber = Math.round(beta(a, b) * (road.lanesNumber - 1))
     while road.lanes[laneNumber].isClosed
       laneNumber = Math.round(beta(a, b) * (road.lanesNumber - 1))
