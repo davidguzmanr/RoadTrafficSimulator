@@ -5,6 +5,7 @@ require '../helpers'
 _ = require 'underscore'
 settings = require '../settings'
 Trajectory = require './trajectory'
+beta = require '@stdlib/random/base/beta'
 
 class Car
   constructor: (lane, position) ->
@@ -115,60 +116,40 @@ class Car
 
         turnNumber = currentLane.getTurnDirection @nextLane
 
-        laneNumber = switch turnNumber
-          when 0
-            R = nextRoad.lanesNumber - 1
-            while nextRoad.lanes[R].isClosed
-              R -= 1
-            R # return R
-          when 1
-            R = _.random(0, nextRoad.lanesNumber - 1)
-            while nextRoad.lanes[R].isClosed
-              R = _.random(0, nextRoad.lanesNumber - 1)
-            R # return R pass
-          when 2
-            R = 0
-            while nextRoad.lanes[R].isClosed
-              R += 1
-            R # return
+        laneNumber = @chooseLaneNumber(turnNumber, nextRoad)
 
-        @nextLane = nextRoad.lanes[R]
-        @trajectory.nextLane = nextRoad.lanes[R]
+        @nextLane = nextRoad.lanes[laneNumber]
+        @trajectory.nextLane = nextRoad.lanes[laneNumber]
 
       # IDK if this will happen, just covering my bases
       else if @nextLane.isClosed
         nextRoad = @nextLane.road
         turnNumber = currentRoad.getTurnDirection(nextRoad)
+        
+        laneNumber = @chooseLaneNumber(turnNumber, nextRoad)
 
-        laneNumber = switch turnNumber
-          when 0
-            R = nextRoad.lanesNumber - 1
-            while nextRoad.lanes[R].isClosed
-              R -= 1
-            R # return R
-          when 1
-            R = _.random(0, nextRoad.lanesNumber - 1)
-            while nextRoad.lanes[R].isClosed
-              R = _.random(0, nextRoad.lanesNumber - 1)
-            R # return R pass
-          when 2
-            R = 0
-            while nextRoad.lanes[R].isClosed
-              R += 1
-            R # return
-
-        @nextLane = nextRoad.lanes[R]
-        @trajectory.nextLane = nextRoad.lanes[R]
+        @nextLane = nextRoad.lanes[laneNumber]
+        @trajectory.nextLane = nextRoad.lanes[laneNumber]
 
       else
         turnNumber = currentLane.getTurnDirection(@nextLane)
+      
+      #This must be fixed. Check if the lane you WANT to be in is not the one you are currently in.
+      #Need a reference
+      #preferedLane = switch turnNumber
+      #  when 0 then currentLane.leftmostAdjacent
+      #  when 2 then currentLane.rightmostAdjacent
+      #  else currentLane
+      #if preferedLane isnt currentLane
+      #  @trajectory.changeLane preferedLane
+      currentRoad = @trajectory.current.lane.road
 
-      preferedLane = switch turnNumber
-        when 0 then currentLane.leftmostAdjacent
-        when 2 then currentLane.rightmostAdjacent
-        else currentLane
-      if preferedLane isnt currentLane
-        @trajectory.changeLane preferedLane
+      preferedLane = @chooseLaneNumber(turnNumber, currentRoad)
+
+      if preferedLane > currentLane.laneIndex
+        @trajectory.changeLane currentLane.rightAdjacent
+      else if preferedLane < currentLane.laneIndex
+        @trajectory.changeLane currentLane.leftAdjacent
 
     step = @speed * delta + 0.5 * acceleration * delta ** 2
     # TODO: hacks, should have changed speed
@@ -195,28 +176,7 @@ class Car
     # throw Error 'can not pick next road' if not nextRoad
     turnNumber = @trajectory.current.lane.road.getTurnDirection nextRoad # Calculate turn direction (which road to go to)
 
-    # asignar_entero(rbeta(parametros varian dependiendo de a donde quieras ir))
-    laneNumber = switch turnNumber
-      when 0
-        R = nextRoad.lanesNumber - 1
-        while nextRoad.lanes[R].isClosed
-          R -= 1
-        R # return R
-      when 1
-        R = _.random(0, nextRoad.lanesNumber - 1)
-        while nextRoad.lanes[R].isClosed
-          R = _.random(0, nextRoad.lanesNumber - 1)
-        R # return R pass
-      when 2
-        R = 0
-        while nextRoad.lanes[R].isClosed
-          R += 1
-        R # return
-
-#     laneNumber = switch turnNumber
-#       when 0 then nextRoad.lanesNumber - 1
-#       when 1 then _.random 0, nextRoad.lanesNumber - 1
-#       when 2 then 0
+    laneNumber = @chooseLaneNumber(turnNumber, nextRoad)
 
     @nextLane = nextRoad.lanes[laneNumber]
     throw Error 'can not pick next lane' if not @nextLane
@@ -227,5 +187,35 @@ class Car
     @nextLane = null
     @preferedLane = null
     return nextLane
+
+  getPossibleTurns: ->
+    intersection = @trajectory.nextIntersection
+    currentLane = @trajectory.current.lane
+
+    possibleRoads = intersection.roads.filter (x) -> x.target != currentLane.road.source
+
+    possibleTurns = possibleRoads.map (o) -> @current.lane.road.getTurnDirection(o)
+      
+    return possibleTurns
+
+  chooseLaneNumber: (turnNumber, road) ->
+    laneNumber = switch turnNumber
+      when 0
+        R = Math.round(beta(1.0, 4.0) * (road.lanesNumber - 1))
+        while road.lanes[R].isClosed
+          R = Math.round(beta(1.0, 4.0) * (road.lanesNumber - 1))
+        R # return R
+      when 1
+        R = Math.round(beta(5.0, 5.0) * (road.lanesNumber - 1))
+        while road.lanes[R].isClosed
+          R = Math.round(beta(5.0, 5.0) * (road.lanesNumber - 1))
+         R # return R pass
+      when 2
+        R = Math.round(beta(4.0, 1.0) * (road.lanesNumber - 1))
+        while road.lanes[R].isClosed
+         R = Math.round(beta(4.0, 1.0) * (road.lanesNumber - 1))
+        R # return
+    return laneNumber
+
 
 module.exports = Car

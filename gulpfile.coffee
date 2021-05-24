@@ -13,6 +13,7 @@ plumber = require 'gulp-plumber'
 notify = require 'gulp-notify'
 browserify = require 'browserify'
 source = require 'vinyl-source-stream'
+stdlib = require '@stdlib/stdlib'
 
 errorHandler = (e) ->
   gutil.log e

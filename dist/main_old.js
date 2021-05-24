@@ -1339,7 +1339,7 @@ Road = (function() {
       }
       for (i = _i = 0, _ref = this.lanesNumber - 1; 0 <= _ref ? _i <= _ref : _i >= _ref; i = 0 <= _ref ? ++_i : --_i) {
         if ((_base = this.lanes)[i] == null) {
-          _base[i] = new Lane(sourceSplits[i], targetSplits[i], this);
+          _base[i] = new Lane(sourceSplits[i], targetSplits[i], this, i);
         }
       }
     }
@@ -1486,6 +1486,7 @@ Trajectory = (function() {
     if (turnNumber === 3) {
       throw Error('no U-turns are allowed');
     }
+    //TODO: Have to delete these.
     if (turnNumber === 0 && !sourceLane.isLeftmost) {
       throw Error('no left turns from this lane');
     }
