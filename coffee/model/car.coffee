@@ -16,6 +16,7 @@ class Car
     total_prob = settings.probCar + settings.probBus + settings.probBike
     vehicle_probability_dist = [settings.probCar/total_prob, settings.probBus/total_prob, settings.probBike/total_prob]
     @fixed_positioning = true
+    @known_fixed_position = null
 
     if type_of_car < vehicle_probability_dist[0]
       @id = _.uniqueId 'car'
@@ -136,17 +137,19 @@ class Car
         turnNumber = currentLane.getTurnDirection(@nextLane)
       
     #Comment-Mario: Hilariously broken. Must fix
+    #Idea: Choose a lane and then move towards it.
     if @fixed_positioning == false and not @trajectory.isChangingLanes
-      currentRoad = @trajectory.current.lane.road
-
-      preferedLane = @chooseLaneNumber(turnNumber, currentRoad)
-
+      if not @known_fixed_position
+        currentRoad = @trajectory.current.lane.road
+        preferedLane = @chooseLaneNumber(turnNumber, currentRoad)
+        @known_fixed_position = preferedLane
       if preferedLane < currentLane.laneIndex
         @trajectory.changeLane currentLane.rightAdjacent
       else if preferedLane > currentLane.laneIndex
         @trajectory.changeLane currentLane.leftAdjacent
       else
         @fixed_positioning = true
+        @known_fixed_position = null
 
     step = @speed * delta + 0.5 * acceleration * delta ** 2
     # TODO: hacks, should have changed speed

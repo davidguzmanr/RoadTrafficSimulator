@@ -421,6 +421,7 @@ Car = (function() {
     total_prob = settings.probCar + settings.probBus + settings.probBike;
     vehicle_probability_dist = [settings.probCar / total_prob, settings.probBus / total_prob, settings.probBike / total_prob];
     this.fixed_positioning = true;
+    this.known_fixed_position = null;
     if (type_of_car < vehicle_probability_dist[0]) {
       this.id = _.uniqueId('car');
       this.color = (300 + 240 * random() | 0) % 360;
@@ -545,14 +546,18 @@ Car = (function() {
       }
     }
     if (this.fixed_positioning === false && !this.trajectory.isChangingLanes) {
-      currentRoad = this.trajectory.current.lane.road;
-      preferedLane = this.chooseLaneNumber(turnNumber, currentRoad);
+      if (!this.known_fixed_position) {
+        currentRoad = this.trajectory.current.lane.road;
+        preferedLane = this.chooseLaneNumber(turnNumber, currentRoad);
+        this.known_fixed_position = preferedLane;
+      }
       if (preferedLane < currentLane.laneIndex) {
         this.trajectory.changeLane(currentLane.rightAdjacent);
       } else if (preferedLane > currentLane.laneIndex) {
         this.trajectory.changeLane(currentLane.leftAdjacent);
       } else {
         this.fixed_positioning = true;
+        this.known_fixed_position = null;
       }
     }
     step = this.speed * delta + 0.5 * acceleration * Math.pow(delta, 2);
