@@ -210,7 +210,7 @@ class Car
           a = 1.0
         else if 2 not in possibleTurns#I can go left and straight
           a = 20.0
-          b = 0.5
+          b = 1.0
         else if 1 not in possibleTurns#I can go left and right
           a = 30.0
           b = 1.0
@@ -236,11 +236,11 @@ class Car
           a = 1.0
           b = 30.0
         else if 0 not in possibleTurns#I can go right and straight.
-          a = 0.5
+          a = 1.0
           b = 20.0
-    laneNumber = Math.round(beta(a, b) * (road.lanesNumber - 1))
+    laneNumber = Math.floor(beta(a, b) * (road.lanesNumber))
     while road.lanes[laneNumber].isClosed
-      laneNumber = Math.round(beta(a, b) * (road.lanesNumber - 1))
+      laneNumber = Math.floor(beta(a, b) * (road.lanesNumber))
     return laneNumber
 
 
