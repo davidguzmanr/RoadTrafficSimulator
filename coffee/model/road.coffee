@@ -80,7 +80,7 @@ class Road
     if not @lanes? or @lanes.length < @lanesNumber
       @lanes ?= []
       for i in [0..@lanesNumber - 1]
-        @lanes[i] ?= new Lane sourceSplits[i], targetSplits[i], this
+        @lanes[i] ?= new Lane sourceSplits[i], targetSplits[i], this, i
     for i in [0..@lanesNumber - 1]
       @lanes[i].sourceSegment = sourceSplits[i]
       @lanes[i].targetSegment = targetSplits[i]

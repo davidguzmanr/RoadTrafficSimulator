@@ -15,6 +15,7 @@ class Car
     type_of_car = random()
     total_prob = settings.probCar + settings.probBus + settings.probBike
     vehicle_probability_dist = [settings.probCar/total_prob, settings.probBus/total_prob, settings.probBike/total_prob]
+    @fixed_positioning = true
 
     if type_of_car < vehicle_probability_dist[0]
       @id = _.uniqueId 'car'
@@ -134,22 +135,18 @@ class Car
       else
         turnNumber = currentLane.getTurnDirection(@nextLane)
       
-      #This must be fixed. Check if the lane you WANT to be in is not the one you are currently in.
-      #Need a reference
-      #preferedLane = switch turnNumber
-      #  when 0 then currentLane.leftmostAdjacent
-      #  when 2 then currentLane.rightmostAdjacent
-      #  else currentLane
-      #if preferedLane isnt currentLane
-      #  @trajectory.changeLane preferedLane
+    #Comment-Mario: Hilariously broken. Must fix
+    if @fixed_positioning == false and not @trajectory.isChangingLanes
       currentRoad = @trajectory.current.lane.road
 
       preferedLane = @chooseLaneNumber(turnNumber, currentRoad)
 
-      if preferedLane > currentLane.laneIndex
+      if preferedLane < currentLane.laneIndex
         @trajectory.changeLane currentLane.rightAdjacent
-      else if preferedLane < currentLane.laneIndex
+      else if preferedLane > currentLane.laneIndex
         @trajectory.changeLane currentLane.leftAdjacent
+      else
+        @fixed_positioning = true
 
     step = @speed * delta + 0.5 * acceleration * delta ** 2
     # TODO: hacks, should have changed speed
@@ -180,6 +177,7 @@ class Car
 
     @nextLane = nextRoad.lanes[laneNumber]
     throw Error 'can not pick next lane' if not @nextLane
+    @fixed_positioning = false
     return @nextLane
 
   popNextLane: ->
@@ -199,44 +197,44 @@ class Car
     return possibleTurns
 
   chooseLaneNumber: (turnNumber, road) ->
-    possibleTurns = @getPossibleTurns()
+    possibleTurns = @getPossibleTurns()#Important info: Rightmost lane is 0
     switch turnNumber
       when 0#If I want to turn left
-        a = 1.0
-        b = 5.0
+        b = 1.0
+        a = 20.0
         if( 1 not in possibleTurns and 2 not in possibleTurns) #I can only go left
+          b = 1.0
           a = 1.0
-          b = 1.0
         else if 2 not in possibleTurns#I can go left and straight
-          a = 10.0
-          b = 1.0
+          a = 20.0
+          b = 0.5
         else if 1 not in possibleTurns#I can go left and right
-          a = 10.0
+          a = 30.0
           b = 1.0
       when 1#If I want to go straight
-        a = 30.0
-        b = 30.0
+        b = 50.0
+        a = 50.0
         if( 0 not in possibleTurns and 2 not in possibleTurns)#I can only go straight
-          a = 1.0
           b = 1.0
+          a = 1.0
         else if 2 not in possibleTurns#I can go straight and left
           a = 1.0
-          b = 10.0
+          b = 7.0
         else if 0 not in possibleTurns#I can go straight and right
-          a = 10.0
+          a = 7.0
           b = 1.0
       when 2 #If I want to go right
-        a = 5.0
-        b = 1.0
+        b = 20.0
+        a = 1.0
         if( 0 not in possibleTurns and 1 not in possibleTurns)#I can only go right
-          a = 1.0
           b = 1.0
+          a = 1.0
         else if 1 not in possibleTurns#I can go right and left
           a = 1.0
-          b = 10.0
+          b = 30.0
         else if 0 not in possibleTurns#I can go right and straight.
-          a = 1.0
-          b = 10.0
+          a = 0.5
+          b = 20.0
     laneNumber = Math.round(beta(a, b) * (road.lanesNumber - 1))
     while road.lanes[laneNumber].isClosed
       laneNumber = Math.round(beta(a, b) * (road.lanesNumber - 1))

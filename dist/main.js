@@ -420,6 +420,7 @@ Car = (function() {
     type_of_car = random();
     total_prob = settings.probCar + settings.probBus + settings.probBike;
     vehicle_probability_dist = [settings.probCar / total_prob, settings.probBus / total_prob, settings.probBike / total_prob];
+    this.fixed_positioning = true;
     if (type_of_car < vehicle_probability_dist[0]) {
       this.id = _.uniqueId('car');
       this.color = (300 + 240 * random() | 0) % 360;
@@ -542,12 +543,16 @@ Car = (function() {
       } else {
         turnNumber = currentLane.getTurnDirection(this.nextLane);
       }
+    }
+    if (this.fixed_positioning === false && !this.trajectory.isChangingLanes) {
       currentRoad = this.trajectory.current.lane.road;
       preferedLane = this.chooseLaneNumber(turnNumber, currentRoad);
-      if (preferedLane > currentLane.laneIndex) {
+      if (preferedLane < currentLane.laneIndex) {
         this.trajectory.changeLane(currentLane.rightAdjacent);
-      } else if (preferedLane < currentLane.laneIndex) {
+      } else if (preferedLane > currentLane.laneIndex) {
         this.trajectory.changeLane(currentLane.leftAdjacent);
+      } else {
+        this.fixed_positioning = true;
       }
     }
     step = this.speed * delta + 0.5 * acceleration * Math.pow(delta, 2);
@@ -588,6 +593,7 @@ Car = (function() {
     if (!this.nextLane) {
       throw Error('can not pick next lane');
     }
+    this.fixed_positioning = false;
     return this.nextLane;
   };
 
@@ -617,45 +623,45 @@ Car = (function() {
     possibleTurns = this.getPossibleTurns();
     switch (turnNumber) {
       case 0:
-        a = 1.0;
-        b = 5.0;
+        b = 1.0;
+        a = 20.0;
         if (__indexOf.call(possibleTurns, 1) < 0 && __indexOf.call(possibleTurns, 2) < 0) {
+          b = 1.0;
           a = 1.0;
-          b = 1.0;
         } else if (__indexOf.call(possibleTurns, 2) < 0) {
-          a = 10.0;
-          b = 1.0;
+          a = 20.0;
+          b = 0.5;
         } else if (__indexOf.call(possibleTurns, 1) < 0) {
-          a = 10.0;
+          a = 30.0;
           b = 1.0;
         }
         break;
       case 1:
-        a = 30.0;
-        b = 30.0;
+        b = 50.0;
+        a = 50.0;
         if (__indexOf.call(possibleTurns, 0) < 0 && __indexOf.call(possibleTurns, 2) < 0) {
-          a = 1.0;
           b = 1.0;
+          a = 1.0;
         } else if (__indexOf.call(possibleTurns, 2) < 0) {
           a = 1.0;
-          b = 10.0;
+          b = 7.0;
         } else if (__indexOf.call(possibleTurns, 0) < 0) {
-          a = 10.0;
+          a = 7.0;
           b = 1.0;
         }
         break;
       case 2:
-        a = 5.0;
-        b = 1.0;
+        b = 20.0;
+        a = 1.0;
         if (__indexOf.call(possibleTurns, 0) < 0 && __indexOf.call(possibleTurns, 1) < 0) {
-          a = 1.0;
           b = 1.0;
+          a = 1.0;
         } else if (__indexOf.call(possibleTurns, 1) < 0) {
           a = 1.0;
-          b = 10.0;
+          b = 30.0;
         } else if (__indexOf.call(possibleTurns, 0) < 0) {
-          a = 1.0;
-          b = 10.0;
+          a = 0.5;
+          b = 20.0;
         }
     }
     laneNumber = Math.round(beta(a, b) * (road.lanesNumber - 1));
@@ -1255,7 +1261,7 @@ Road = (function() {
       }
       for (i = _i = 0, _ref = this.lanesNumber - 1; 0 <= _ref ? _i <= _ref : _i >= _ref; i = 0 <= _ref ? ++_i : --_i) {
         if ((_base = this.lanes)[i] == null) {
-          _base[i] = new Lane(sourceSplits[i], targetSplits[i], this);
+          _base[i] = new Lane(sourceSplits[i], targetSplits[i], this, i);
         }
       }
     }
