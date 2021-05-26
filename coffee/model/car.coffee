@@ -6,6 +6,7 @@ _ = require 'underscore'
 settings = require '../settings'
 Trajectory = require './trajectory'
 beta = require '@stdlib/random/base/beta'
+binomial = require '@stdlib/random/base/binomial'
 
 class Car
   constructor: (lane, position) ->
@@ -204,7 +205,7 @@ class Car
     switch turnNumber
       when 0#If I want to turn left
         b = 1.0
-        a = 20.0
+        a = 7.0
         if( 1 not in possibleTurns and 2 not in possibleTurns) #I can only go left
           b = 1.0
           a = 1.0
@@ -212,11 +213,11 @@ class Car
           a = 20.0
           b = 1.0
         else if 1 not in possibleTurns#I can go left and right
-          a = 30.0
+          a = 5.0
           b = 1.0
       when 1#If I want to go straight
-        b = 50.0
-        a = 50.0
+        b = 10.0
+        a = 10.0
         if( 0 not in possibleTurns and 2 not in possibleTurns)#I can only go straight
           b = 1.0
           a = 1.0
@@ -227,20 +228,21 @@ class Car
           a = 7.0
           b = 1.0
       when 2 #If I want to go right
-        b = 20.0
+        b = 7.0
         a = 1.0
         if( 0 not in possibleTurns and 1 not in possibleTurns)#I can only go right
           b = 1.0
           a = 1.0
         else if 1 not in possibleTurns#I can go right and left
           a = 1.0
-          b = 30.0
+          b = 5.0
         else if 0 not in possibleTurns#I can go right and straight.
           a = 1.0
           b = 20.0
-    laneNumber = Math.floor(beta(a, b) * (road.lanesNumber))
+    #Beta-Binomial(a,b,k)
+    laneNumber = binomial(road.lanesNumber-1, beta(a, b))
     while road.lanes[laneNumber].isClosed
-      laneNumber = Math.floor(beta(a, b) * (road.lanesNumber))
+      laneNumber = binomial(road.lanesNumber-1, beta(a, b))
     return laneNumber
 
 
