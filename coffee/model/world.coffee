@@ -8,10 +8,13 @@ Intersection = require './intersection'
 Road = require './road'
 Pool = require './pool'
 Rect = require '../geom/rect'
+Visualizer = require '../visualizer/visualizer'
+Tool = require '../visualizer/tool'
 settings = require '../settings'
 
 class World
   constructor: ->
+    # @tool = new Tool new Visualizer this, true
     @set {}
 
   @property 'instantSpeed',
@@ -98,12 +101,13 @@ class World
           previous = intersection
     null
 
-  changeNumberofLanes: ->
-    # Most recent one but it won't work until we make changes to trajectory.coffee and car.coffee
+  changeNumberofLanes: (id=null) ->
     _refroads = @roads.all()
 
-    # Comment-David: pick a random road to change number of lanes
-    id = _.sample(@roads.all()).id
+    if id == null
+      # Comment-David: pick a random road to change number of lanes
+      id = _.sample(@roads.all()).id
+
     road = _refroads[id]
 
     # Comment-David: this reduces a lane in one direction
@@ -111,33 +115,6 @@ class World
     console.log('LANE CLOSED')
     removed_lane.isClosed = true
     removed_lane.tryOpen();
-
-    # An older version but it should work -> it doesn't lol
-#     _refroads = @roads.all()
-#     id = _.sample(this.roads.all()).id
-#     road = _refroads[id]
-#
-#     # This reduces a lane in one direction
-#     removed_lane = road.leftmostLane # Equivalent to road.lanes[road.lanesNumbers - 1]
-#     road.lanesNumber -= 1
-#     road.lanes = road.lanes.slice(0,road.lanesNumber)
-#     road.update(road.lanesNumber)
-#
-#     # Search for the road next to the current road
-#     for x in Object.values(_refroads)
-#       if x.source.id == road.target.id and x.target.id == road.source.id
-#         next_road = x
-#
-#     # This adds a lane in the other direction
-#     new_lanes = next_road.lanes
-#     # Change the direction and other attributes to make it go in the other direction
-#     removed_lane.direction += Math.PI
-#     removed_lane.road = next_road
-#
-#     new_lanes.unshift(removed_lane) # Add removed_lane at [0], i.e., rightmostLane
-#     next_road.lanes = new_lanes
-#     next_road.lanesNumber += 1
-#     # next_road.update(next_road.lanesNumber)
 
     return
 

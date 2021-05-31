@@ -40,7 +40,11 @@ class Tool
   draw: ->
 
   getPoint: (e) ->
-    new Point e.pageX - @canvas.offsetLeft, e.pageY - @canvas.offsetTop
+    new Point e.pageX - @canvas.offsetLeft, e.pageY - @canvas.offsetTop # original
+
+  getPoint2: (e) ->
+    # @canvas.offsetLeft and @canvas.offsetTop are 0, so there must be another one
+    new Point e.pageX - 0.5*@canvas.offsetWidth, e.pageY - 0.5*@canvas.offsetHeight
 
   getCell: (e) ->
     @visualizer.zoomer.toCellCoords @getPoint e

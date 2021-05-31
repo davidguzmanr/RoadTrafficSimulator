@@ -13,6 +13,7 @@ ToolIntersectionMover = require './intersection-mover'
 ToolIntersectionBuilder = require './intersection-builder'
 ToolRoadBuilder = require './road-builder'
 ToolHighlighter = require './highlighter'
+Tool = require './tool'
 Zoomer = require './zoomer'
 settings = require '../settings'
 
@@ -28,6 +29,7 @@ class Visualizer
     @updateCanvasSize()
     @zoomer = new Zoomer 4, this, true
     @graphics = new Graphics @ctx
+    @tool = new Tool this, true
     @toolRoadbuilder = new ToolRoadBuilder this, true
     @toolIntersectionBuilder = new ToolIntersectionBuilder this, true
     @toolHighlighter = new ToolHighlighter this, true
@@ -130,14 +132,12 @@ class Visualizer
         @graphics.polyline(lane.sourceSegment.source, lane.sourceSegment.target, lane.targetSegment.source, lane.targetSegment.target)
         @graphics.fill('red', 0.2)
     
-    # Falta completar lane.coffee
-
     # Comment-David: This add the road-id and number of lanes to the debug feature
     if @debug
       @ctx.save()
       @ctx.fillStyle = "red"
       @ctx.font = "1px Arial"
-      @ctx.fillText(road.id, (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y) / 2);
+      @ctx.fillText(road.id + '  ' + (road.sourceSide.source.x + road.targetSide.source.x) / 2 + '  ' + (road.sourceSide.source.y + road.targetSide.source.y) / 2, (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y) / 2);
       @ctx.fillText("#lanes=" + road.lanesNumber, (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y) / 2 + 1)
 
       # Find the road besides the current road
@@ -166,8 +166,8 @@ class Visualizer
 
       flux_total = flux + next_flux
       percentage = flux/flux_total
-      n_lanes = 2
-      n_lanes_next = 2
+      n_lanes = 3
+      n_lanes_next = 3
 
       density = (n_lanes_next/n_lanes) * (percentage) / (1 - percentage)
 
