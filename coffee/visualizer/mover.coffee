@@ -13,10 +13,11 @@ class Mover extends Tool
 
   click: (e) =>
     if e.ctrlKey
-      click_point = @getPoint(e) # da fuc is this doing?
+      click_point = @visualizer.zoomer.toPointCoords(@getPoint(e))
+      click_cell = @getCell(e)
 
-      # Comment-David: we define the middle point of each road and then we find the road
-      # closest to the point 'e' where we clicked
+      # Comment-David: we define the middle point of each road and then we find the road closest to
+      #                the point 'e' where we clicked, it is better to click near the middle of the road
       closest_road_distance = Infinity
       closest_road_id = null
       _refroads = @visualizer.world.roads.all()
@@ -29,9 +30,8 @@ class Mover extends Tool
             closest_road_distance = distance
             closest_road_id = _ref.id
 
-      console.log('Click point: (' + click_point.x + ', ' + click_point.y + '). Closest road: ' + closest_road_id)
-
-      # Hacemos el cambio en ese road
+      console.log('closest road: ' + closest_road_id)
+      # Hacemos el cambio en el road donde hacemos el clic
       @visualizer.world.changeNumberofLanes(closest_road_id)
 
   mousedown: (e) =>
@@ -49,7 +49,5 @@ class Mover extends Tool
 
   mouseout: =>
     @startPosition = null
-
-
 
 module.exports = Mover

@@ -2305,13 +2305,13 @@ Mover = (function(_super) {
   };
 
   Mover.prototype.click = function(e) {
-    var click_point, closest_road_distance, closest_road_id, distance, x_middle, y_middle, _i, _len, _ref, _ref1, _refroads;
+    var click_cell, click_point, closest_road_distance, closest_road_id, distance, x_middle, y_middle, _i, _len, _ref, _ref1, _refroads;
     if (e.ctrlKey) {
-      _refroads = this.visualizer.world.roads.all();
-      click_point = this.getPoint(e);
-      console.log(this.getCell(e));
+      click_point = this.visualizer.zoomer.toPointCoords(this.getPoint(e));
+      click_cell = this.getCell(e);
       closest_road_distance = Infinity;
       closest_road_id = null;
+      _refroads = this.visualizer.world.roads.all();
       _ref1 = Object.values(_refroads);
       for (_i = 0, _len = _ref1.length; _i < _len; _i++) {
         _ref = _ref1[_i];
@@ -2323,7 +2323,7 @@ Mover = (function(_super) {
           closest_road_id = _ref.id;
         }
       }
-      console.log('Click point: (' + click_point.x + ', ' + click_point.y + '). Closest road: ' + closest_road_id);
+      console.log('closest road: ' + closest_road_id);
       return this.visualizer.world.changeNumberofLanes(closest_road_id);
     }
   };
@@ -2446,7 +2446,8 @@ module.exports = ToolRoadBuilder;
 
 },{"../helpers.coffee":6,"../model/road.coffee":13,"./tool.coffee":23}],23:[function(require,module,exports){
 'use strict';
-var $, METHODS, Point, Rect, Tool, _;
+var $, METHODS, Point, Rect, Tool, settings, _,
+  __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; };
 
 require('../helpers.coffee');
 
@@ -2458,6 +2459,8 @@ Point = require('../geom/point.coffee');
 
 Rect = require('../geom/rect.coffee');
 
+settings = require('../settings.coffee');
+
 require('jquery-mousewheel')($);
 
 METHODS = ['click', 'mousedown', 'mouseup', 'mousemove', 'mouseout', 'mousewheel', 'contextmenu'];
@@ -2465,13 +2468,48 @@ METHODS = ['click', 'mousedown', 'mouseup', 'mousemove', 'mouseout', 'mousewheel
 Tool = (function() {
   function Tool(visualizer, autobind) {
     this.visualizer = visualizer;
+    this.mousewheel = __bind(this.mousewheel, this);
     this.ctx = this.visualizer.ctx;
     this.canvas = this.ctx.canvas;
+    this._scale = 1;
+    this.screenCenter = new Point(this.canvas.width / 2, this.canvas.height / 2);
+    this.center = new Point(this.canvas.width / 2, this.canvas.height / 2);
     this.isBound = false;
     if (autobind) {
       this.bind();
     }
   }
+
+  Tool.property('scale', {
+    get: function() {
+      return this._scale;
+    },
+    set: function(scale) {
+      return this.zoom(scale, this.screenCenter);
+    }
+  });
+
+  Tool.prototype.zoom = function(k, zoomCenter) {
+    var offset;
+    if (k == null) {
+      k = 1;
+    }
+    offset = this.center.subtract(zoomCenter);
+    this.center = zoomCenter.add(offset.mult(k / this._scale));
+    return this._scale = k;
+  };
+
+  Tool.prototype.moveCenter = function(offset) {
+    return this.center = this.center.add(offset);
+  };
+
+  Tool.prototype.mousewheel = function(e) {
+    var offset, zoomFactor;
+    offset = e.deltaY * e.deltaFactor;
+    zoomFactor = Math.pow(2, 0.001 * offset);
+    this.zoom(this.scale * zoomFactor, this.getPoint(e));
+    return e.preventDefault();
+  };
 
   Tool.prototype.bind = function() {
     var method, _i, _len, _results;
@@ -2513,10 +2551,6 @@ Tool = (function() {
     return new Point(e.pageX - this.canvas.offsetLeft, e.pageY - this.canvas.offsetTop);
   };
 
-  Tool.prototype.getPoint2 = function(e) {
-    return new Point(e.pageX - 0.5 * this.canvas.offsetWidth, e.pageY - 0.5 * this.canvas.offsetHeight);
-  };
-
   Tool.prototype.getCell = function(e) {
     return this.visualizer.zoomer.toCellCoords(this.getPoint(e));
   };
@@ -2539,7 +2573,7 @@ Tool = (function() {
 module.exports = Tool;
 
 
-},{"../geom/point.coffee":3,"../geom/rect.coffee":4,"../helpers.coffee":6,"jquery":423,"jquery-mousewheel":422,"underscore":424}],24:[function(require,module,exports){
+},{"../geom/point.coffee":3,"../geom/rect.coffee":4,"../helpers.coffee":6,"../settings.coffee":16,"jquery":423,"jquery-mousewheel":422,"underscore":424}],24:[function(require,module,exports){
 'use strict';
 var $, Graphics, PI, Point, Rect, Tool, ToolHighlighter, ToolIntersectionBuilder, ToolIntersectionMover, ToolMover, ToolRoadBuilder, Visualizer, Zoomer, chroma, settings, _,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; };
@@ -2689,7 +2723,7 @@ Visualizer = (function() {
       this.ctx.save();
       this.ctx.fillStyle = "red";
       this.ctx.font = "1px Arial";
-      this.ctx.fillText(road.id + '  ' + (road.sourceSide.source.x + road.targetSide.source.x) / 2 + '  ' + (road.sourceSide.source.y + road.targetSide.source.y) / 2, (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y) / 2);
+      this.ctx.fillText(road.id, (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y) / 2);
       this.ctx.fillText("#lanes=" + road.lanesNumber, (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y) / 2 + 1);
       _refroads = this.world.roads.all();
       _ref1 = Object.values(_refroads);
@@ -2915,6 +2949,15 @@ Zoomer = (function(_super) {
     x = Math.floor(centerOffset.x / (this.defaultZoom * gridSize)) * gridSize;
     y = Math.floor(centerOffset.y / (this.defaultZoom * gridSize)) * gridSize;
     return new Rect(x, y, gridSize, gridSize);
+  };
+
+  Zoomer.prototype.toPointCoords = function(point) {
+    var centerOffset, gridSize, x_center, y_center;
+    gridSize = settings.gridSize;
+    centerOffset = point.subtract(this.center).divide(this.scale);
+    x_center = centerOffset.x / (this.defaultZoom * gridSize) * gridSize;
+    y_center = centerOffset.y / (this.defaultZoom * gridSize) * gridSize;
+    return new Point(x_center, y_center);
   };
 
   Zoomer.prototype.getBoundingBox = function(cell1, cell2) {

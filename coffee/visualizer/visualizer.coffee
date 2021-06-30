@@ -137,12 +137,11 @@ class Visualizer
       @ctx.save()
       @ctx.fillStyle = "red"
       @ctx.font = "1px Arial"
-      @ctx.fillText(road.id + '  ' + (road.sourceSide.source.x + road.targetSide.source.x) / 2 + '  ' + (road.sourceSide.source.y + road.targetSide.source.y) / 2, (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y) / 2);
+      @ctx.fillText(road.id, (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y) / 2);
       @ctx.fillText("#lanes=" + road.lanesNumber, (road.sourceSide.source.x + road.targetSide.source.x) / 2, (road.sourceSide.source.y + road.targetSide.source.y) / 2 + 1)
 
       # Find the road besides the current road
       _refroads = @world.roads.all()
-
       for _ref in Object.values(_refroads)
         if _ref.source.id == road.target.id and _ref.target.id == road.source.id
           next_road = _ref
@@ -162,8 +161,7 @@ class Visualizer
 
       # This will measure the density according to equations (2) and (3) from
       # https://www.researchgate.net/publication/348225622_Modeling_adaptive_reversible_lanes_A_cellular_automata_approach,
-      # we are taking rho = 1
-
+      # we are taking rho = 1.
       flux_total = flux + next_flux
       percentage = flux/flux_total
       n_lanes = 3
