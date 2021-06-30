@@ -10,7 +10,7 @@ https://davidguzmanr.github.io/files/RoadTrafficSimulator.html
 - Mouse and wheel - scrolling and zoom.
 - shift + click -- create intersection.
 - shift + drag from one intersection to another -- create road.
-- ctrl + click -- change number of lanes in the road you're clicking.
+- ctrl + click -- change number of lanes on the road you're clicking.
 
 Or just press `generateMap` in control panel and add cars with `carsNumber` slider. To change the number of lanes
 use the `lanesNumber` slider and then press `load`. You can create traffic in a certain direction by adding cars in the 
