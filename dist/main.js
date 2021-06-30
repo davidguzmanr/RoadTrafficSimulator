@@ -60,7 +60,7 @@ $(function() {
 });
 
 
-},{"./helpers":6,"./model/world":15,"./settings":16,"./visualizer/visualizer":24,"dat-gui":28,"fs":26,"jquery":32,"underscore":33}],2:[function(require,module,exports){
+},{"./helpers":6,"./model/world":15,"./settings":16,"./visualizer/visualizer":24,"dat-gui":417,"fs":414,"jquery":423,"underscore":424}],2:[function(require,module,exports){
 'use strict';
 var Curve, Segment;
 
@@ -314,7 +314,7 @@ Rect = (function() {
 module.exports = Rect;
 
 
-},{"../helpers":6,"./point":3,"./segment":5,"underscore":33}],5:[function(require,module,exports){
+},{"../helpers":6,"./point":3,"./segment":5,"underscore":424}],5:[function(require,module,exports){
 'use strict';
 var Segment;
 
@@ -399,7 +399,8 @@ Function.prototype.property = function(prop, desc) {
 
 },{}],7:[function(require,module,exports){
 'use strict';
-var Car, Trajectory, max, min, random, settings, sqrt, _;
+var Car, Trajectory, beta, binomial, max, min, random, settings, sqrt, _,
+  __indexOf = [].indexOf || function(item) { for (var i = 0, l = this.length; i < l; i++) { if (i in this && this[i] === item) return i; } return -1; };
 
 max = Math.max, min = Math.min, random = Math.random, sqrt = Math.sqrt;
 
@@ -411,12 +412,18 @@ settings = require('../settings');
 
 Trajectory = require('./trajectory');
 
+beta = require('@stdlib/random/base/beta');
+
+binomial = require('@stdlib/random/base/binomial');
+
 Car = (function() {
   function Car(lane, position) {
     var total_prob, type_of_car, vehicle_probability_dist;
     type_of_car = random();
     total_prob = settings.probCar + settings.probBus + settings.probBike;
     vehicle_probability_dist = [settings.probCar / total_prob, settings.probBus / total_prob, settings.probBike / total_prob];
+    this.fixed_positioning = true;
+    this.known_fixed_position = null;
     if (type_of_car < vehicle_probability_dist[0]) {
       this.id = _.uniqueId('car');
       this.color = (300 + 240 * random() | 0) % 360;
@@ -513,7 +520,7 @@ Car = (function() {
   };
 
   Car.prototype.move = function(delta) {
-    var R, acceleration, currentLane, currentRoad, laneNumber, nextRoad, preferedLane, step, turnNumber;
+    var acceleration, currentLane, currentRoad, laneNumber, nextRoad, preferedLane, step, turnNumber;
     acceleration = this.getAcceleration();
     this.speed += acceleration * delta;
     if (!this.trajectory.isChangingLanes && this.nextLane) {
@@ -527,72 +534,32 @@ Car = (function() {
           nextRoad = this.nextLane.road;
         }
         turnNumber = currentLane.getTurnDirection(this.nextLane);
-        laneNumber = (function() {
-          switch (turnNumber) {
-            case 0:
-              R = nextRoad.lanesNumber - 1;
-              while (nextRoad.lanes[R].isClosed) {
-                R -= 1;
-              }
-              return R;
-            case 1:
-              R = _.random(0, nextRoad.lanesNumber - 1);
-              while (nextRoad.lanes[R].isClosed) {
-                R = _.random(0, nextRoad.lanesNumber - 1);
-              }
-              return R;
-            case 2:
-              R = 0;
-              while (nextRoad.lanes[R].isClosed) {
-                R += 1;
-              }
-              return R;
-          }
-        })();
-        this.nextLane = nextRoad.lanes[R];
-        this.trajectory.nextLane = nextRoad.lanes[R];
+        laneNumber = this.chooseLaneNumber(turnNumber, nextRoad);
+        this.nextLane = nextRoad.lanes[laneNumber];
+        this.trajectory.nextLane = nextRoad.lanes[laneNumber];
       } else if (this.nextLane.isClosed) {
         nextRoad = this.nextLane.road;
         turnNumber = currentRoad.getTurnDirection(nextRoad);
-        laneNumber = (function() {
-          switch (turnNumber) {
-            case 0:
-              R = nextRoad.lanesNumber - 1;
-              while (nextRoad.lanes[R].isClosed) {
-                R -= 1;
-              }
-              return R;
-            case 1:
-              R = _.random(0, nextRoad.lanesNumber - 1);
-              while (nextRoad.lanes[R].isClosed) {
-                R = _.random(0, nextRoad.lanesNumber - 1);
-              }
-              return R;
-            case 2:
-              R = 0;
-              while (nextRoad.lanes[R].isClosed) {
-                R += 1;
-              }
-              return R;
-          }
-        })();
-        this.nextLane = nextRoad.lanes[R];
-        this.trajectory.nextLane = nextRoad.lanes[R];
+        laneNumber = this.chooseLaneNumber(turnNumber, nextRoad);
+        this.nextLane = nextRoad.lanes[laneNumber];
+        this.trajectory.nextLane = nextRoad.lanes[laneNumber];
       } else {
         turnNumber = currentLane.getTurnDirection(this.nextLane);
       }
-      preferedLane = (function() {
-        switch (turnNumber) {
-          case 0:
-            return currentLane.leftmostAdjacent;
-          case 2:
-            return currentLane.rightmostAdjacent;
-          default:
-            return currentLane;
-        }
-      })();
-      if (preferedLane !== currentLane) {
-        this.trajectory.changeLane(preferedLane);
+    }
+    if (this.fixed_positioning === false && !this.trajectory.isChangingLanes) {
+      if (!this.known_fixed_position) {
+        currentRoad = this.trajectory.current.lane.road;
+        preferedLane = this.chooseLaneNumber(turnNumber, currentRoad);
+        this.known_fixed_position = preferedLane;
+      }
+      if (preferedLane < currentLane.laneIndex) {
+        this.trajectory.changeLane(currentLane.rightAdjacent);
+      } else if (preferedLane > currentLane.laneIndex) {
+        this.trajectory.changeLane(currentLane.leftAdjacent);
+      } else {
+        this.fixed_positioning = true;
+        this.known_fixed_position = null;
       }
     }
     step = this.speed * delta + 0.5 * acceleration * Math.pow(delta, 2);
@@ -621,39 +588,19 @@ Car = (function() {
   };
 
   Car.prototype.pickNextLane = function() {
-    var R, laneNumber, nextRoad, turnNumber;
+    var laneNumber, nextRoad, turnNumber;
     this.nextLane = null;
     nextRoad = this.pickNextRoad();
     if (!nextRoad) {
       return null;
     }
     turnNumber = this.trajectory.current.lane.road.getTurnDirection(nextRoad);
-    laneNumber = (function() {
-      switch (turnNumber) {
-        case 0:
-          R = nextRoad.lanesNumber - 1;
-          while (nextRoad.lanes[R].isClosed) {
-            R -= 1;
-          }
-          return R;
-        case 1:
-          R = _.random(0, nextRoad.lanesNumber - 1);
-          while (nextRoad.lanes[R].isClosed) {
-            R = _.random(0, nextRoad.lanesNumber - 1);
-          }
-          return R;
-        case 2:
-          R = 0;
-          while (nextRoad.lanes[R].isClosed) {
-            R += 1;
-          }
-          return R;
-      }
-    })();
+    laneNumber = this.chooseLaneNumber(turnNumber, nextRoad);
     this.nextLane = nextRoad.lanes[laneNumber];
     if (!this.nextLane) {
       throw Error('can not pick next lane');
     }
+    this.fixed_positioning = false;
     return this.nextLane;
   };
 
@@ -665,6 +612,72 @@ Car = (function() {
     return nextLane;
   };
 
+  Car.prototype.getPossibleTurns = function() {
+    var currentLane, intersection, possibleRoads, possibleTurns;
+    intersection = this.trajectory.nextIntersection;
+    currentLane = this.trajectory.current.lane;
+    possibleRoads = intersection.roads.filter(function(x) {
+      return x.target !== currentLane.road.source;
+    });
+    possibleTurns = possibleRoads.map(function(o) {
+      return currentLane.road.getTurnDirection(o);
+    });
+    return possibleTurns;
+  };
+
+  Car.prototype.chooseLaneNumber = function(turnNumber, road) {
+    var a, b, laneNumber, possibleTurns;
+    possibleTurns = this.getPossibleTurns();
+    switch (turnNumber) {
+      case 0:
+        b = 1.0;
+        a = 7.0;
+        if (__indexOf.call(possibleTurns, 1) < 0 && __indexOf.call(possibleTurns, 2) < 0) {
+          b = 1.0;
+          a = 1.0;
+        } else if (__indexOf.call(possibleTurns, 2) < 0) {
+          a = 20.0;
+          b = 1.0;
+        } else if (__indexOf.call(possibleTurns, 1) < 0) {
+          a = 5.0;
+          b = 1.0;
+        }
+        break;
+      case 1:
+        b = 10.0;
+        a = 10.0;
+        if (__indexOf.call(possibleTurns, 0) < 0 && __indexOf.call(possibleTurns, 2) < 0) {
+          b = 1.0;
+          a = 1.0;
+        } else if (__indexOf.call(possibleTurns, 2) < 0) {
+          a = 1.0;
+          b = 7.0;
+        } else if (__indexOf.call(possibleTurns, 0) < 0) {
+          a = 7.0;
+          b = 1.0;
+        }
+        break;
+      case 2:
+        b = 7.0;
+        a = 1.0;
+        if (__indexOf.call(possibleTurns, 0) < 0 && __indexOf.call(possibleTurns, 1) < 0) {
+          b = 1.0;
+          a = 1.0;
+        } else if (__indexOf.call(possibleTurns, 1) < 0) {
+          a = 1.0;
+          b = 5.0;
+        } else if (__indexOf.call(possibleTurns, 0) < 0) {
+          a = 1.0;
+          b = 20.0;
+        }
+    }
+    laneNumber = binomial(road.lanesNumber - 1, beta(a, b));
+    while (road.lanes[laneNumber].isClosed) {
+      laneNumber = binomial(road.lanesNumber - 1, beta(a, b));
+    }
+    return laneNumber;
+  };
+
   return Car;
 
 })();
@@ -672,7 +685,7 @@ Car = (function() {
 module.exports = Car;
 
 
-},{"../helpers":6,"../settings":16,"./trajectory":14,"underscore":33}],8:[function(require,module,exports){
+},{"../helpers":6,"../settings":16,"./trajectory":14,"@stdlib/random/base/beta":309,"@stdlib/random/base/binomial":318,"underscore":424}],8:[function(require,module,exports){
 'use strict';
 var ControlSignals, random, settings,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
@@ -844,7 +857,7 @@ Intersection = (function() {
 module.exports = Intersection;
 
 
-},{"../geom/rect":4,"../helpers":6,"./control-signals":8,"underscore":33}],10:[function(require,module,exports){
+},{"../geom/rect":4,"../helpers":6,"./control-signals":8,"underscore":424}],10:[function(require,module,exports){
 'use strict';
 var LanePosition, _;
 
@@ -925,7 +938,7 @@ LanePosition = (function() {
 module.exports = LanePosition;
 
 
-},{"../helpers":6,"underscore":33}],11:[function(require,module,exports){
+},{"../helpers":6,"underscore":424}],11:[function(require,module,exports){
 'use strict';
 var Lane, Segment, _;
 
@@ -936,10 +949,11 @@ _ = require('underscore');
 Segment = require('../geom/segment');
 
 Lane = (function() {
-  function Lane(sourceSegment, targetSegment, road) {
+  function Lane(sourceSegment, targetSegment, road, laneIndex) {
     this.sourceSegment = sourceSegment;
     this.targetSegment = targetSegment;
     this.road = road;
+    this.laneIndex = laneIndex;
     this.leftAdjacent = null;
     this.rightAdjacent = null;
     this.leftmostAdjacent = null;
@@ -1012,9 +1026,16 @@ Lane = (function() {
       road.update(road.lanesNumber);
       next_road = road.oppositeRoad;
       new_lanes = next_road.lanes;
+      console.log("old direction:");
+      console.log(this.direction);
       this.direction += Math.PI;
+      console.log("new direction");
+      console.log(this.direction);
+      console.log("new_fixed");
+      console.log((this.direction + 2 * Math.PI) % (2 * Math.PI));
       this.road = next_road;
-      new_lanes.unshift(this);
+      new_lanes.push(this);
+      this.laneIndex = next_road.lanesNumber;
       next_road.lanes = new_lanes;
       next_road.lanesNumber += 1;
       next_road.update(next_road.lanesNumber);
@@ -1081,7 +1102,7 @@ Lane = (function() {
 module.exports = Lane;
 
 
-},{"../geom/segment":5,"../helpers":6,"underscore":33}],12:[function(require,module,exports){
+},{"../geom/segment":5,"../helpers":6,"underscore":424}],12:[function(require,module,exports){
 'use strict';
 var Pool;
 
@@ -1247,7 +1268,7 @@ Road = (function() {
       }
       for (i = _i = 0, _ref = this.lanesNumber - 1; 0 <= _ref ? _i <= _ref : _i >= _ref; i = 0 <= _ref ? ++_i : --_i) {
         if ((_base = this.lanes)[i] == null) {
-          _base[i] = new Lane(sourceSplits[i], targetSplits[i], this);
+          _base[i] = new Lane(sourceSplits[i], targetSplits[i], this, i);
         }
       }
     }
@@ -1271,9 +1292,9 @@ Road = (function() {
 module.exports = Road;
 
 
-},{"../helpers":6,"../settings":16,"./lane":11,"underscore":33}],14:[function(require,module,exports){
+},{"../helpers":6,"../settings":16,"./lane":11,"underscore":424}],14:[function(require,module,exports){
 'use strict';
-var Curve, LanePosition, Trajectory, max, min, _;
+var Curve, LanePosition, Trajectory, beta, max, min, _;
 
 min = Math.min, max = Math.max;
 
@@ -1284,6 +1305,8 @@ LanePosition = require('./lane-position');
 Curve = require('../geom/curve');
 
 _ = require('underscore');
+
+beta = require('@stdlib/random/base/beta');
 
 Trajectory = (function() {
   function Trajectory(car, lane, position) {
@@ -1388,17 +1411,11 @@ Trajectory = (function() {
     if (turnNumber === 3) {
       throw Error('no U-turns are allowed');
     }
-    if (turnNumber === 0 && !sourceLane.isLeftmost) {
-      throw Error('no left turns from this lane');
-    }
-    if (turnNumber === 2 && !sourceLane.isRightmost) {
-      throw Error('no right turns from this lane');
-    }
     return true;
   };
 
   Trajectory.prototype.canEnterIntersection = function() {
-    var R, currentRoad, intersection, laneNumber, nextLane, nextRoad, sideId, sourceLane, turnNumber;
+    var currentRoad, intersection, laneNumber, nextLane, nextRoad, sideId, sourceLane, turnNumber;
     nextLane = this.car.nextLane;
     sourceLane = this.current.lane;
     if (!nextLane) {
@@ -1413,30 +1430,9 @@ Trajectory = (function() {
         nextRoad = nextLane.road;
       }
       turnNumber = currentRoad.getTurnDirection(nextRoad);
-      laneNumber = (function() {
-        switch (turnNumber) {
-          case 0:
-            R = nextRoad.lanesNumber - 1;
-            while (nextRoad.lanes[R].isClosed) {
-              R -= 1;
-            }
-            return R;
-          case 1:
-            R = _.random(0, nextRoad.lanesNumber - 1);
-            while (nextRoad.lanes[R].isClosed) {
-              R = _.random(0, nextRoad.lanesNumber - 1);
-            }
-            return R;
-          case 2:
-            R = 0;
-            while (nextRoad.lanes[R].isClosed) {
-              R += 1;
-            }
-            return R;
-        }
-      })();
-      nextLane = nextRoad.lanes[R];
-      this.car.nextLane = nextRoad.lanes[R];
+      laneNumber = this.car.chooseLaneNumber(turnNumber, currentRoad);
+      nextLane = nextRoad.lanes[laneNumber];
+      this.car.nextLane = nextRoad.lanes[laneNumber];
     } else {
       turnNumber = sourceLane.getTurnDirection(nextLane);
     }
@@ -1575,9 +1571,9 @@ Trajectory = (function() {
 module.exports = Trajectory;
 
 
-},{"../geom/curve":2,"../helpers":6,"./lane-position":10,"underscore":33}],15:[function(require,module,exports){
+},{"../geom/curve":2,"../helpers":6,"./lane-position":10,"@stdlib/random/base/beta":309,"underscore":424}],15:[function(require,module,exports){
 'use strict';
-var Car, Intersection, Pool, Rect, Road, World, random, settings, _,
+var Car, Intersection, Pool, Rect, Road, Tool, Visualizer, World, random, settings, _,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; };
 
 random = Math.random;
@@ -1595,6 +1591,10 @@ Road = require('./road');
 Pool = require('./pool');
 
 Rect = require('../geom/rect');
+
+Visualizer = require('../visualizer/visualizer');
+
+Tool = require('../visualizer/tool');
 
 settings = require('../settings');
 
@@ -1627,7 +1627,7 @@ World = (function() {
     this.roads = new Pool(Road, obj.roads);
     this.cars = new Pool(Car, obj.cars);
     this.carsNumber = 0;
-    this.lanesNumber = 2;
+    this.lanesNumber = 3;
     return this.time = 0;
   };
 
@@ -1684,7 +1684,7 @@ World = (function() {
     gridSize = settings.gridSize;
     step = 5 * gridSize;
     this.carsNumber = 100;
-    this.lanesNumber = 2;
+    this.lanesNumber = 3;
     while (intersectionsNumber > 0) {
       x = _.random(minX, maxX);
       y = _.random(minY, maxY);
@@ -1736,10 +1736,15 @@ World = (function() {
     return null;
   };
 
-  World.prototype.changeNumberofLanes = function() {
-    var id, removed_lane, road, _refroads;
+  World.prototype.changeNumberofLanes = function(id) {
+    var removed_lane, road, _refroads;
+    if (id == null) {
+      id = null;
+    }
     _refroads = this.roads.all();
-    id = _.sample(this.roads.all()).id;
+    if (id === null) {
+      id = _.sample(this.roads.all()).id;
+    }
     road = _refroads[id];
     removed_lane = road.leftmostLane;
     console.log('LANE CLOSED');
@@ -1910,7 +1915,7 @@ World = (function() {
 module.exports = World;
 
 
-},{"../geom/rect":4,"../helpers":6,"../settings":16,"./car":7,"./intersection":9,"./pool":12,"./road":13,"underscore":33}],16:[function(require,module,exports){
+},{"../geom/rect":4,"../helpers":6,"../settings":16,"../visualizer/tool":23,"../visualizer/visualizer":24,"./car":7,"./intersection":9,"./pool":12,"./road":13,"underscore":424}],16:[function(require,module,exports){
 'use strict';
 var settings;
 
@@ -2290,12 +2295,37 @@ Mover = (function(_super) {
     this.mousemove = __bind(this.mousemove, this);
     this.mouseup = __bind(this.mouseup, this);
     this.mousedown = __bind(this.mousedown, this);
+    this.click = __bind(this.click, this);
     Mover.__super__.constructor.apply(this, arguments);
     this.startPosition = null;
   }
 
   Mover.prototype.contextmenu = function() {
     return false;
+  };
+
+  Mover.prototype.click = function(e) {
+    var click_cell, click_point, closest_road_distance, closest_road_id, distance, x_middle, y_middle, _i, _len, _ref, _ref1, _refroads;
+    if (e.ctrlKey) {
+      click_point = this.visualizer.zoomer.toPointCoords(this.getPoint(e));
+      click_cell = this.getCell(e);
+      closest_road_distance = Infinity;
+      closest_road_id = null;
+      _refroads = this.visualizer.world.roads.all();
+      _ref1 = Object.values(_refroads);
+      for (_i = 0, _len = _ref1.length; _i < _len; _i++) {
+        _ref = _ref1[_i];
+        x_middle = (_ref.sourceSide.source.x + _ref.targetSide.source.x) / 2;
+        y_middle = (_ref.sourceSide.source.y + _ref.targetSide.source.y) / 2;
+        distance = Math.pow(click_point.x - x_middle, 2) + Math.pow(click_point.y - y_middle, 2);
+        if (distance < closest_road_distance) {
+          closest_road_distance = distance;
+          closest_road_id = _ref.id;
+        }
+      }
+      console.log('closest road: ' + closest_road_id);
+      return this.visualizer.world.changeNumberofLanes(closest_road_id);
+    }
   };
 
   Mover.prototype.mousedown = function(e) {
@@ -2416,7 +2446,8 @@ module.exports = ToolRoadBuilder;
 
 },{"../helpers.coffee":6,"../model/road.coffee":13,"./tool.coffee":23}],23:[function(require,module,exports){
 'use strict';
-var $, METHODS, Point, Rect, Tool, _;
+var $, METHODS, Point, Rect, Tool, settings, _,
+  __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; };
 
 require('../helpers.coffee');
 
@@ -2428,6 +2459,8 @@ Point = require('../geom/point.coffee');
 
 Rect = require('../geom/rect.coffee');
 
+settings = require('../settings.coffee');
+
 require('jquery-mousewheel')($);
 
 METHODS = ['click', 'mousedown', 'mouseup', 'mousemove', 'mouseout', 'mousewheel', 'contextmenu'];
@@ -2435,13 +2468,48 @@ METHODS = ['click', 'mousedown', 'mouseup', 'mousemove', 'mouseout', 'mousewheel
 Tool = (function() {
   function Tool(visualizer, autobind) {
     this.visualizer = visualizer;
+    this.mousewheel = __bind(this.mousewheel, this);
     this.ctx = this.visualizer.ctx;
     this.canvas = this.ctx.canvas;
+    this._scale = 1;
+    this.screenCenter = new Point(this.canvas.width / 2, this.canvas.height / 2);
+    this.center = new Point(this.canvas.width / 2, this.canvas.height / 2);
     this.isBound = false;
     if (autobind) {
       this.bind();
     }
   }
+
+  Tool.property('scale', {
+    get: function() {
+      return this._scale;
+    },
+    set: function(scale) {
+      return this.zoom(scale, this.screenCenter);
+    }
+  });
+
+  Tool.prototype.zoom = function(k, zoomCenter) {
+    var offset;
+    if (k == null) {
+      k = 1;
+    }
+    offset = this.center.subtract(zoomCenter);
+    this.center = zoomCenter.add(offset.mult(k / this._scale));
+    return this._scale = k;
+  };
+
+  Tool.prototype.moveCenter = function(offset) {
+    return this.center = this.center.add(offset);
+  };
+
+  Tool.prototype.mousewheel = function(e) {
+    var offset, zoomFactor;
+    offset = e.deltaY * e.deltaFactor;
+    zoomFactor = Math.pow(2, 0.001 * offset);
+    this.zoom(this.scale * zoomFactor, this.getPoint(e));
+    return e.preventDefault();
+  };
 
   Tool.prototype.bind = function() {
     var method, _i, _len, _results;
@@ -2505,9 +2573,9 @@ Tool = (function() {
 module.exports = Tool;
 
 
-},{"../geom/point.coffee":3,"../geom/rect.coffee":4,"../helpers.coffee":6,"jquery":32,"jquery-mousewheel":31,"underscore":33}],24:[function(require,module,exports){
+},{"../geom/point.coffee":3,"../geom/rect.coffee":4,"../helpers.coffee":6,"../settings.coffee":16,"jquery":423,"jquery-mousewheel":422,"underscore":424}],24:[function(require,module,exports){
 'use strict';
-var $, Graphics, PI, Point, Rect, ToolHighlighter, ToolIntersectionBuilder, ToolIntersectionMover, ToolMover, ToolRoadBuilder, Visualizer, Zoomer, chroma, settings, _,
+var $, Graphics, PI, Point, Rect, Tool, ToolHighlighter, ToolIntersectionBuilder, ToolIntersectionMover, ToolMover, ToolRoadBuilder, Visualizer, Zoomer, chroma, settings, _,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; };
 
 PI = Math.PI;
@@ -2536,6 +2604,8 @@ ToolRoadBuilder = require('./road-builder');
 
 ToolHighlighter = require('./highlighter');
 
+Tool = require('./tool');
+
 Zoomer = require('./zoomer');
 
 settings = require('../settings');
@@ -2552,6 +2622,7 @@ Visualizer = (function() {
     this.updateCanvasSize();
     this.zoomer = new Zoomer(4, this, true);
     this.graphics = new Graphics(this.ctx);
+    this.tool = new Tool(this, true);
     this.toolRoadbuilder = new ToolRoadBuilder(this, true);
     this.toolIntersectionBuilder = new ToolIntersectionBuilder(this, true);
     this.toolHighlighter = new ToolHighlighter(this, true);
@@ -2677,8 +2748,8 @@ Visualizer = (function() {
       }
       flux_total = flux + next_flux;
       percentage = flux / flux_total;
-      n_lanes = 2;
-      n_lanes_next = 2;
+      n_lanes = 3;
+      n_lanes_next = 3;
       density = (n_lanes_next / n_lanes) * percentage / (1 - percentage);
       if (density === Infinity) {
         density = 1;
@@ -2825,7 +2896,7 @@ Visualizer = (function() {
 module.exports = Visualizer;
 
 
-},{"../geom/point":3,"../geom/rect":4,"../helpers":6,"../settings":16,"./graphics":17,"./highlighter":18,"./intersection-builder":19,"./intersection-mover":20,"./mover":21,"./road-builder":22,"./zoomer":25,"chroma-js":27,"jquery":32,"underscore":33}],25:[function(require,module,exports){
+},{"../geom/point":3,"../geom/rect":4,"../helpers":6,"../settings":16,"./graphics":17,"./highlighter":18,"./intersection-builder":19,"./intersection-mover":20,"./mover":21,"./road-builder":22,"./tool":23,"./zoomer":25,"chroma-js":416,"jquery":423,"underscore":424}],25:[function(require,module,exports){
 'use strict';
 var Point, Rect, Tool, Zoomer, max, min, settings,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
@@ -2878,6 +2949,15 @@ Zoomer = (function(_super) {
     x = Math.floor(centerOffset.x / (this.defaultZoom * gridSize)) * gridSize;
     y = Math.floor(centerOffset.y / (this.defaultZoom * gridSize)) * gridSize;
     return new Rect(x, y, gridSize, gridSize);
+  };
+
+  Zoomer.prototype.toPointCoords = function(point) {
+    var centerOffset, gridSize, x_center, y_center;
+    gridSize = settings.gridSize;
+    centerOffset = point.subtract(this.center).divide(this.scale);
+    x_center = centerOffset.x / (this.defaultZoom * gridSize) * gridSize;
+    y_center = centerOffset.y / (this.defaultZoom * gridSize) * gridSize;
+    return new Point(x_center, y_center);
   };
 
   Zoomer.prototype.getBoundingBox = function(cell1, cell2) {
@@ -2936,8 +3016,25401 @@ module.exports = Zoomer;
 
 
 },{"../geom/point.coffee":3,"../geom/rect.coffee":4,"../helpers.coffee":6,"../settings.coffee":16,"./tool.coffee":23}],26:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var ctor = ( typeof Float32Array === 'function' ) ? Float32Array : void 0; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = ctor;
 
 },{}],27:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Typed array constructor which returns a typed array representing an array of single-precision floating-point numbers in the platform byte order.
+*
+* @module @stdlib/array/float32
+*
+* @example
+* var ctor = require( '@stdlib/array/float32' );
+*
+* var arr = new ctor( 10 );
+* // returns <Float32Array>
+*/
+
+// MODULES //
+
+var hasFloat32ArraySupport = require( '@stdlib/assert/has-float32array-support' );
+var builtin = require( './float32array.js' );
+var polyfill = require( './polyfill.js' );
+
+
+// MAIN //
+
+var ctor;
+if ( hasFloat32ArraySupport() ) {
+	ctor = builtin;
+} else {
+	ctor = polyfill;
+}
+
+
+// EXPORTS //
+
+module.exports = ctor;
+
+},{"./float32array.js":26,"./polyfill.js":28,"@stdlib/assert/has-float32array-support":61}],28:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// TODO: write polyfill
+
+// MAIN //
+
+/**
+* Typed array which represents an array of single-precision floating-point numbers in the platform byte order.
+*
+* @throws {Error} not implemented
+*/
+function polyfill() {
+	throw new Error( 'not implemented' );
+}
+
+
+// EXPORTS //
+
+module.exports = polyfill;
+
+},{}],29:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var ctor = ( typeof Float64Array === 'function' ) ? Float64Array : void 0; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = ctor;
+
+},{}],30:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Typed array constructor which returns a typed array representing an array of double-precision floating-point numbers in the platform byte order.
+*
+* @module @stdlib/array/float64
+*
+* @example
+* var ctor = require( '@stdlib/array/float64' );
+*
+* var arr = new ctor( 10 );
+* // returns <Float64Array>
+*/
+
+// MODULES //
+
+var hasFloat64ArraySupport = require( '@stdlib/assert/has-float64array-support' );
+var builtin = require( './float64array.js' );
+var polyfill = require( './polyfill.js' );
+
+
+// MAIN //
+
+var ctor;
+if ( hasFloat64ArraySupport() ) {
+	ctor = builtin;
+} else {
+	ctor = polyfill;
+}
+
+
+// EXPORTS //
+
+module.exports = ctor;
+
+},{"./float64array.js":29,"./polyfill.js":31,"@stdlib/assert/has-float64array-support":64}],31:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// TODO: write polyfill
+
+// MAIN //
+
+/**
+* Typed array which represents an array of double-precision floating-point numbers in the platform byte order.
+*
+* @throws {Error} not implemented
+*/
+function polyfill() {
+	throw new Error( 'not implemented' );
+}
+
+
+// EXPORTS //
+
+module.exports = polyfill;
+
+},{}],32:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Typed array constructor which returns a typed array representing an array of twos-complement 16-bit signed integers in the platform byte order.
+*
+* @module @stdlib/array/int16
+*
+* @example
+* var ctor = require( '@stdlib/array/int16' );
+*
+* var arr = new ctor( 10 );
+* // returns <Int16Array>
+*/
+
+// MODULES //
+
+var hasInt16ArraySupport = require( '@stdlib/assert/has-int16array-support' );
+var builtin = require( './int16array.js' );
+var polyfill = require( './polyfill.js' );
+
+
+// MAIN //
+
+var ctor;
+if ( hasInt16ArraySupport() ) {
+	ctor = builtin;
+} else {
+	ctor = polyfill;
+}
+
+
+// EXPORTS //
+
+module.exports = ctor;
+
+},{"./int16array.js":33,"./polyfill.js":34,"@stdlib/assert/has-int16array-support":69}],33:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var ctor = ( typeof Int16Array === 'function' ) ? Int16Array : void 0; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = ctor;
+
+},{}],34:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// TODO: write polyfill
+
+// MAIN //
+
+/**
+* Typed array which represents an array of twos-complement 16-bit signed integers in the platform byte order.
+*
+* @throws {Error} not implemented
+*/
+function polyfill() {
+	throw new Error( 'not implemented' );
+}
+
+
+// EXPORTS //
+
+module.exports = polyfill;
+
+},{}],35:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Typed array constructor which returns a typed array representing an array of twos-complement 32-bit signed integers in the platform byte order.
+*
+* @module @stdlib/array/int32
+*
+* @example
+* var ctor = require( '@stdlib/array/int32' );
+*
+* var arr = new ctor( 10 );
+* // returns <Int32Array>
+*/
+
+// MODULES //
+
+var hasInt32ArraySupport = require( '@stdlib/assert/has-int32array-support' );
+var builtin = require( './int32array.js' );
+var polyfill = require( './polyfill.js' );
+
+
+// MAIN //
+
+var ctor;
+if ( hasInt32ArraySupport() ) {
+	ctor = builtin;
+} else {
+	ctor = polyfill;
+}
+
+
+// EXPORTS //
+
+module.exports = ctor;
+
+},{"./int32array.js":36,"./polyfill.js":37,"@stdlib/assert/has-int32array-support":72}],36:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var ctor = ( typeof Int32Array === 'function' ) ? Int32Array : void 0; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = ctor;
+
+},{}],37:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// TODO: write polyfill
+
+// MAIN //
+
+/**
+* Typed array which represents an array of twos-complement 32-bit signed integers in the platform byte order.
+*
+* @throws {Error} not implemented
+*/
+function polyfill() {
+	throw new Error( 'not implemented' );
+}
+
+
+// EXPORTS //
+
+module.exports = polyfill;
+
+},{}],38:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Typed array constructor which returns a typed array representing an array of twos-complement 8-bit signed integers in the platform byte order.
+*
+* @module @stdlib/array/int8
+*
+* @example
+* var ctor = require( '@stdlib/array/int8' );
+*
+* var arr = new ctor( 10 );
+* // returns <Int8Array>
+*/
+
+// MODULES //
+
+var hasInt8ArraySupport = require( '@stdlib/assert/has-int8array-support' );
+var builtin = require( './int8array.js' );
+var polyfill = require( './polyfill.js' );
+
+
+// MAIN //
+
+var ctor;
+if ( hasInt8ArraySupport() ) {
+	ctor = builtin;
+} else {
+	ctor = polyfill;
+}
+
+
+// EXPORTS //
+
+module.exports = ctor;
+
+},{"./int8array.js":39,"./polyfill.js":40,"@stdlib/assert/has-int8array-support":75}],39:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var ctor = ( typeof Int8Array === 'function' ) ? Int8Array : void 0; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = ctor;
+
+},{}],40:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// TODO: write polyfill
+
+// MAIN //
+
+/**
+* Typed array which represents an array of twos-complement 8-bit signed integers in the platform byte order.
+*
+* @throws {Error} not implemented
+*/
+function polyfill() {
+	throw new Error( 'not implemented' );
+}
+
+
+// EXPORTS //
+
+module.exports = polyfill;
+
+},{}],41:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var Int8Array = require( '@stdlib/array/int8' );
+var Uint8Array = require( '@stdlib/array/uint8' );
+var Uint8ClampedArray = require( '@stdlib/array/uint8c' );
+var Int16Array = require( '@stdlib/array/int16' );
+var Uint16Array = require( '@stdlib/array/uint16' );
+var Int32Array = require( '@stdlib/array/int32' );
+var Uint32Array = require( '@stdlib/array/uint32' );
+var Float32Array = require( '@stdlib/array/float32' );
+var Float64Array = require( '@stdlib/array/float64' );
+
+
+// MAIN //
+
+var CTORS = [
+	[ Float64Array, 'Float64Array' ],
+	[ Float32Array, 'Float32Array' ],
+	[ Int32Array, 'Int32Array' ],
+	[ Uint32Array, 'Uint32Array' ],
+	[ Int16Array, 'Int16Array' ],
+	[ Uint16Array, 'Uint16Array' ],
+	[ Int8Array, 'Int8Array' ],
+	[ Uint8Array, 'Uint8Array' ],
+	[ Uint8ClampedArray, 'Uint8ClampedArray' ]
+];
+
+
+// EXPORTS //
+
+module.exports = CTORS;
+
+},{"@stdlib/array/float32":27,"@stdlib/array/float64":30,"@stdlib/array/int16":32,"@stdlib/array/int32":35,"@stdlib/array/int8":38,"@stdlib/array/uint16":45,"@stdlib/array/uint32":48,"@stdlib/array/uint8":51,"@stdlib/array/uint8c":54}],42:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Return a JSON representation of a typed array.
+*
+* @module @stdlib/array/to-json
+*
+* @example
+* var Float64Array = require( '@stdlib/array/float64' );
+* var toJSON = require( '@stdlib/array/to-json' );
+*
+* var arr = new Float64Array( [ 5.0, 3.0 ] );
+* var json = toJSON( arr );
+* // returns { 'type': 'Float64Array', 'data': [ 5.0, 3.0 ] }
+*/
+
+// MODULES //
+
+var toJSON = require( './to_json.js' );
+
+
+// EXPORTS //
+
+module.exports = toJSON;
+
+},{"./to_json.js":43}],43:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isTypedArray = require( '@stdlib/assert/is-typed-array' );
+var typeName = require( './type.js' );
+
+
+// MAIN //
+
+/**
+* Returns a JSON representation of a typed array.
+*
+* ## Notes
+*
+* -   We build a JSON object representing a typed array similar to how Node.js `Buffer` objects are represented. See [Buffer][1].
+*
+* [1]: https://nodejs.org/api/buffer.html#buffer_buf_tojson
+*
+* @param {TypedArray} arr - typed array to serialize
+* @throws {TypeError} first argument must be a typed array
+* @returns {Object} JSON representation
+*
+* @example
+* var Float64Array = require( '@stdlib/array/float64' );
+*
+* var arr = new Float64Array( [ 5.0, 3.0 ] );
+* var json = toJSON( arr );
+* // returns { 'type': 'Float64Array', 'data': [ 5.0, 3.0 ] }
+*/
+function toJSON( arr ) {
+	var out;
+	var i;
+	if ( !isTypedArray( arr ) ) {
+		throw new TypeError( 'invalid argument. Must provide a typed array. Value: `' + arr + '`.' );
+	}
+	out = {};
+	out.type = typeName( arr );
+	out.data = [];
+	for ( i = 0; i < arr.length; i++ ) {
+		out.data.push( arr[ i ] );
+	}
+	return out;
+}
+
+
+// EXPORTS //
+
+module.exports = toJSON;
+
+},{"./type.js":44,"@stdlib/assert/is-typed-array":184}],44:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var instanceOf = require( '@stdlib/assert/instance-of' );
+var ctorName = require( '@stdlib/utils/constructor-name' );
+var getPrototypeOf = require( '@stdlib/utils/get-prototype-of' );
+var CTORS = require( './ctors.js' );
+
+
+// MAIN //
+
+/**
+* Returns the typed array type.
+*
+* @private
+* @param {TypedArray} arr - typed array
+* @returns {(string|void)} typed array type
+*
+* @example
+* var Float64Array = require( '@stdlib/array/float64' );
+*
+* var arr = new Float64Array( 5 );
+* var str = typeName( arr );
+* // returns 'Float64Array'
+*/
+function typeName( arr ) {
+	var v;
+	var i;
+
+	// Check for typed array objects from the same realm (same Node.js `vm` or same `Window` object)...
+	for ( i = 0; i < CTORS.length; i++ ) {
+		if ( instanceOf( arr, CTORS[ i ][ 0 ] ) ) {
+			return CTORS[ i ][ 1 ];
+		}
+	}
+	// Walk the prototype tree until we find an object having a desired native class...
+	while ( arr ) {
+		v = ctorName( arr );
+		for ( i = 0; i < CTORS.length; i++ ) {
+			if ( v === CTORS[ i ][ 1 ] ) {
+				return CTORS[ i ][ 1 ];
+			}
+		}
+		arr = getPrototypeOf( arr );
+	}
+}
+
+
+// EXPORTS //
+
+module.exports = typeName;
+
+},{"./ctors.js":41,"@stdlib/assert/instance-of":101,"@stdlib/utils/constructor-name":342,"@stdlib/utils/get-prototype-of":361}],45:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Typed array constructor which returns a typed array representing an array of 16-bit unsigned integers in the platform byte order.
+*
+* @module @stdlib/array/uint16
+*
+* @example
+* var ctor = require( '@stdlib/array/uint16' );
+*
+* var arr = new ctor( 10 );
+* // returns <Uint16Array>
+*/
+
+// MODULES //
+
+var hasUint16ArraySupport = require( '@stdlib/assert/has-uint16array-support' );
+var builtin = require( './uint16array.js' );
+var polyfill = require( './polyfill.js' );
+
+
+// MAIN //
+
+var ctor;
+if ( hasUint16ArraySupport() ) {
+	ctor = builtin;
+} else {
+	ctor = polyfill;
+}
+
+
+// EXPORTS //
+
+module.exports = ctor;
+
+},{"./polyfill.js":46,"./uint16array.js":47,"@stdlib/assert/has-uint16array-support":89}],46:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// TODO: write polyfill
+
+// MAIN //
+
+/**
+* Typed array which represents an array of 16-bit unsigned integers in the platform byte order.
+*
+* @throws {Error} not implemented
+*/
+function polyfill() {
+	throw new Error( 'not implemented' );
+}
+
+
+// EXPORTS //
+
+module.exports = polyfill;
+
+},{}],47:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var ctor = ( typeof Uint16Array === 'function' ) ? Uint16Array : void 0; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = ctor;
+
+},{}],48:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Typed array constructor which returns a typed array representing an array of 32-bit unsigned integers in the platform byte order.
+*
+* @module @stdlib/array/uint32
+*
+* @example
+* var ctor = require( '@stdlib/array/uint32' );
+*
+* var arr = new ctor( 10 );
+* // returns <Uint32Array>
+*/
+
+// MODULES //
+
+var hasUint32ArraySupport = require( '@stdlib/assert/has-uint32array-support' );
+var builtin = require( './uint32array.js' );
+var polyfill = require( './polyfill.js' );
+
+
+// MAIN //
+
+var ctor;
+if ( hasUint32ArraySupport() ) {
+	ctor = builtin;
+} else {
+	ctor = polyfill;
+}
+
+
+// EXPORTS //
+
+module.exports = ctor;
+
+},{"./polyfill.js":49,"./uint32array.js":50,"@stdlib/assert/has-uint32array-support":92}],49:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// TODO: write polyfill
+
+// MAIN //
+
+/**
+* Typed array which represents an array of 32-bit unsigned integers in the platform byte order.
+*
+* @throws {Error} not implemented
+*/
+function polyfill() {
+	throw new Error( 'not implemented' );
+}
+
+
+// EXPORTS //
+
+module.exports = polyfill;
+
+},{}],50:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var ctor = ( typeof Uint32Array === 'function' ) ? Uint32Array : void 0; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = ctor;
+
+},{}],51:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Typed array constructor which returns a typed array representing an array of 8-bit unsigned integers in the platform byte order.
+*
+* @module @stdlib/array/uint8
+*
+* @example
+* var ctor = require( '@stdlib/array/uint8' );
+*
+* var arr = new ctor( 10 );
+* // returns <Uint8Array>
+*/
+
+// MODULES //
+
+var hasUint8ArraySupport = require( '@stdlib/assert/has-uint8array-support' );
+var builtin = require( './uint8array.js' );
+var polyfill = require( './polyfill.js' );
+
+
+// MAIN //
+
+var ctor;
+if ( hasUint8ArraySupport() ) {
+	ctor = builtin;
+} else {
+	ctor = polyfill;
+}
+
+
+// EXPORTS //
+
+module.exports = ctor;
+
+},{"./polyfill.js":52,"./uint8array.js":53,"@stdlib/assert/has-uint8array-support":95}],52:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// TODO: write polyfill
+
+// MAIN //
+
+/**
+* Typed array which represents an array of 8-bit unsigned integers in the platform byte order.
+*
+* @throws {Error} not implemented
+*/
+function polyfill() {
+	throw new Error( 'not implemented' );
+}
+
+
+// EXPORTS //
+
+module.exports = polyfill;
+
+},{}],53:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var ctor = ( typeof Uint8Array === 'function' ) ? Uint8Array : void 0; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = ctor;
+
+},{}],54:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Typed array constructor which returns a typed array representing an array of 8-bit unsigned integers in the platform byte order clamped to 0-255.
+*
+* @module @stdlib/array/uint8c
+*
+* @example
+* var ctor = require( '@stdlib/array/uint8c' );
+*
+* var arr = new ctor( 10 );
+* // returns <Uint8ClampedArray>
+*/
+
+// MODULES //
+
+var hasUint8ClampedArraySupport = require( '@stdlib/assert/has-uint8clampedarray-support' ); // eslint-disable-line id-length
+var builtin = require( './uint8clampedarray.js' );
+var polyfill = require( './polyfill.js' );
+
+
+// MAIN //
+
+var ctor;
+if ( hasUint8ClampedArraySupport() ) {
+	ctor = builtin;
+} else {
+	ctor = polyfill;
+}
+
+
+// EXPORTS //
+
+module.exports = ctor;
+
+},{"./polyfill.js":55,"./uint8clampedarray.js":56,"@stdlib/assert/has-uint8clampedarray-support":98}],55:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// TODO: write polyfill
+
+// MAIN //
+
+/**
+* Typed array which represents an array of 8-bit unsigned integers in the platform byte order clamped to 0-255.
+*
+* @throws {Error} not implemented
+*/
+function polyfill() {
+	throw new Error( 'not implemented' );
+}
+
+
+// EXPORTS //
+
+module.exports = polyfill;
+
+},{}],56:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var ctor = ( typeof Uint8ClampedArray === 'function' ) ? Uint8ClampedArray : void 0; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = ctor;
+
+},{}],57:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var main = ( typeof Object.defineProperty === 'function' ) ? Object.defineProperty : null;
+
+
+// EXPORTS //
+
+module.exports = main;
+
+},{}],58:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test for `Object.defineProperty` support.
+*
+* @module @stdlib/assert/has-define-property-support
+*
+* @example
+* var hasDefinePropertySupport = require( '@stdlib/assert/has-define-property-support' );
+*
+* var bool = hasDefinePropertySupport();
+* // returns <boolean>
+*/
+
+// MODULES //
+
+var hasDefinePropertySupport = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = hasDefinePropertySupport;
+
+},{"./main.js":59}],59:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var defineProperty = require( './define_property.js' );
+
+
+// MAIN //
+
+/**
+* Tests for `Object.defineProperty` support.
+*
+* @returns {boolean} boolean indicating if an environment has `Object.defineProperty` support
+*
+* @example
+* var bool = hasDefinePropertySupport();
+* // returns <boolean>
+*/
+function hasDefinePropertySupport() {
+	var bool;
+
+	if ( typeof defineProperty !== 'function' ) {
+		return false;
+	}
+	// Test basic support...
+	try {
+		defineProperty( {}, 'x', {} );
+		bool = true;
+	} catch ( err ) { // eslint-disable-line no-unused-vars
+		bool = false;
+	}
+	return bool;
+}
+
+
+// EXPORTS //
+
+module.exports = hasDefinePropertySupport;
+
+},{"./define_property.js":57}],60:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var main = ( typeof Float32Array === 'function' ) ? Float32Array : null; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = main;
+
+},{}],61:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test for native `Float32Array` support.
+*
+* @module @stdlib/assert/has-float32array-support
+*
+* @example
+* var hasFloat32ArraySupport = require( '@stdlib/assert/has-float32array-support' );
+*
+* var bool = hasFloat32ArraySupport();
+* // returns <boolean>
+*/
+
+// MODULES //
+
+var hasFloat32ArraySupport = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = hasFloat32ArraySupport;
+
+},{"./main.js":62}],62:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isFloat32Array = require( '@stdlib/assert/is-float32array' );
+var PINF = require( '@stdlib/constants/math/float64-pinf' );
+var GlobalFloat32Array = require( './float32array.js' );
+
+
+// MAIN //
+
+/**
+* Tests for native `Float32Array` support.
+*
+* @returns {boolean} boolean indicating if an environment has `Float32Array` support
+*
+* @example
+* var bool = hasFloat32ArraySupport();
+* // returns <boolean>
+*/
+function hasFloat32ArraySupport() {
+	var bool;
+	var arr;
+
+	if ( typeof GlobalFloat32Array !== 'function' ) {
+		return false;
+	}
+	// Test basic support...
+	try {
+		arr = new GlobalFloat32Array( [ 1.0, 3.14, -3.14, 5.0e40 ] );
+		bool = (
+			isFloat32Array( arr ) &&
+			arr[ 0 ] === 1.0 &&
+			arr[ 1 ] === 3.140000104904175 &&
+			arr[ 2 ] === -3.140000104904175 &&
+			arr[ 3 ] === PINF
+		);
+	} catch ( err ) { // eslint-disable-line no-unused-vars
+		bool = false;
+	}
+	return bool;
+}
+
+
+// EXPORTS //
+
+module.exports = hasFloat32ArraySupport;
+
+},{"./float32array.js":60,"@stdlib/assert/is-float32array":125,"@stdlib/constants/math/float64-pinf":216}],63:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var main = ( typeof Float64Array === 'function' ) ? Float64Array : null; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = main;
+
+},{}],64:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test for native `Float64Array` support.
+*
+* @module @stdlib/assert/has-float64array-support
+*
+* @example
+* var hasFloat64ArraySupport = require( '@stdlib/assert/has-float64array-support' );
+*
+* var bool = hasFloat64ArraySupport();
+* // returns <boolean>
+*/
+
+// MODULES //
+
+var hasFloat64ArraySupport = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = hasFloat64ArraySupport;
+
+},{"./main.js":65}],65:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isFloat64Array = require( '@stdlib/assert/is-float64array' );
+var GlobalFloat64Array = require( './float64array.js' );
+
+
+// MAIN //
+
+/**
+* Tests for native `Float64Array` support.
+*
+* @returns {boolean} boolean indicating if an environment has `Float64Array` support
+*
+* @example
+* var bool = hasFloat64ArraySupport();
+* // returns <boolean>
+*/
+function hasFloat64ArraySupport() {
+	var bool;
+	var arr;
+
+	if ( typeof GlobalFloat64Array !== 'function' ) {
+		return false;
+	}
+	// Test basic support...
+	try {
+		arr = new GlobalFloat64Array( [ 1.0, 3.14, -3.14, NaN ] );
+		bool = (
+			isFloat64Array( arr ) &&
+			arr[ 0 ] === 1.0 &&
+			arr[ 1 ] === 3.14 &&
+			arr[ 2 ] === -3.14 &&
+			arr[ 3 ] !== arr[ 3 ]
+		);
+	} catch ( err ) { // eslint-disable-line no-unused-vars
+		bool = false;
+	}
+	return bool;
+}
+
+
+// EXPORTS //
+
+module.exports = hasFloat64ArraySupport;
+
+},{"./float64array.js":63,"@stdlib/assert/is-float64array":127}],66:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Dummy function.
+*
+* @private
+*/
+function foo() {
+	// No-op...
+}
+
+
+// EXPORTS //
+
+module.exports = foo;
+
+},{}],67:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test for native function `name` support.
+*
+* @module @stdlib/assert/has-function-name-support
+*
+* @example
+* var hasFunctionNameSupport = require( '@stdlib/assert/has-function-name-support' );
+*
+* var bool = hasFunctionNameSupport();
+* // returns <boolean>
+*/
+
+// MODULES //
+
+var hasFunctionNameSupport = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = hasFunctionNameSupport;
+
+},{"./main.js":68}],68:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var foo = require( './foo.js' );
+
+
+// MAIN //
+
+/**
+* Tests for native function `name` support.
+*
+* @returns {boolean} boolean indicating if an environment has function `name` support
+*
+* @example
+* var bool = hasFunctionNameSupport();
+* // returns <boolean>
+*/
+function hasFunctionNameSupport() {
+	return ( foo.name === 'foo' );
+}
+
+
+// EXPORTS //
+
+module.exports = hasFunctionNameSupport;
+
+},{"./foo.js":66}],69:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test for native `Int16Array` support.
+*
+* @module @stdlib/assert/has-int16array-support
+*
+* @example
+* var hasInt16ArraySupport = require( '@stdlib/assert/has-int16array-support' );
+*
+* var bool = hasInt16ArraySupport();
+* // returns <boolean>
+*/
+
+// MODULES //
+
+var hasInt16ArraySupport = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = hasInt16ArraySupport;
+
+},{"./main.js":71}],70:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var main = ( typeof Int16Array === 'function' ) ? Int16Array : null; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = main;
+
+},{}],71:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isInt16Array = require( '@stdlib/assert/is-int16array' );
+var INT16_MAX = require( '@stdlib/constants/math/int16-max' );
+var INT16_MIN = require( '@stdlib/constants/math/int16-min' );
+var GlobalInt16Array = require( './int16array.js' );
+
+
+// MAIN //
+
+/**
+* Tests for native `Int16Array` support.
+*
+* @returns {boolean} boolean indicating if an environment has `Int16Array` support
+*
+* @example
+* var bool = hasInt16ArraySupport();
+* // returns <boolean>
+*/
+function hasInt16ArraySupport() {
+	var bool;
+	var arr;
+
+	if ( typeof GlobalInt16Array !== 'function' ) {
+		return false;
+	}
+	// Test basic support...
+	try {
+		arr = new GlobalInt16Array( [ 1, 3.14, -3.14, INT16_MAX+1 ] );
+		bool = (
+			isInt16Array( arr ) &&
+			arr[ 0 ] === 1 &&
+			arr[ 1 ] === 3 &&      // truncation
+			arr[ 2 ] === -3 &&     // truncation
+			arr[ 3 ] === INT16_MIN // wrap around
+		);
+	} catch ( err ) { // eslint-disable-line no-unused-vars
+		bool = false;
+	}
+	return bool;
+}
+
+
+// EXPORTS //
+
+module.exports = hasInt16ArraySupport;
+
+},{"./int16array.js":70,"@stdlib/assert/is-int16array":131,"@stdlib/constants/math/int16-max":218,"@stdlib/constants/math/int16-min":219}],72:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test for native `Int32Array` support.
+*
+* @module @stdlib/assert/has-int32array-support
+*
+* @example
+* var hasInt32ArraySupport = require( '@stdlib/assert/has-int32array-support' );
+*
+* var bool = hasInt32ArraySupport();
+* // returns <boolean>
+*/
+
+// MODULES //
+
+var hasInt32ArraySupport = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = hasInt32ArraySupport;
+
+},{"./main.js":74}],73:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var main = ( typeof Int32Array === 'function' ) ? Int32Array : null; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = main;
+
+},{}],74:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isInt32Array = require( '@stdlib/assert/is-int32array' );
+var INT32_MAX = require( '@stdlib/constants/math/int32-max' );
+var INT32_MIN = require( '@stdlib/constants/math/int32-min' );
+var GlobalInt32Array = require( './int32array.js' );
+
+
+// MAIN //
+
+/**
+* Tests for native `Int32Array` support.
+*
+* @returns {boolean} boolean indicating if an environment has `Int32Array` support
+*
+* @example
+* var bool = hasInt32ArraySupport();
+* // returns <boolean>
+*/
+function hasInt32ArraySupport() {
+	var bool;
+	var arr;
+
+	if ( typeof GlobalInt32Array !== 'function' ) {
+		return false;
+	}
+	// Test basic support...
+	try {
+		arr = new GlobalInt32Array( [ 1, 3.14, -3.14, INT32_MAX+1 ] );
+		bool = (
+			isInt32Array( arr ) &&
+			arr[ 0 ] === 1 &&
+			arr[ 1 ] === 3 &&      // truncation
+			arr[ 2 ] === -3 &&     // truncation
+			arr[ 3 ] === INT32_MIN // wrap around
+		);
+	} catch ( err ) { // eslint-disable-line no-unused-vars
+		bool = false;
+	}
+	return bool;
+}
+
+
+// EXPORTS //
+
+module.exports = hasInt32ArraySupport;
+
+},{"./int32array.js":73,"@stdlib/assert/is-int32array":133,"@stdlib/constants/math/int32-max":220,"@stdlib/constants/math/int32-min":221}],75:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test for native `Int8Array` support.
+*
+* @module @stdlib/assert/has-int8array-support
+*
+* @example
+* var hasInt8ArraySupport = require( '@stdlib/assert/has-int8array-support' );
+*
+* var bool = hasInt8ArraySupport();
+* // returns <boolean>
+*/
+
+// MODULES //
+
+var hasInt8ArraySupport = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = hasInt8ArraySupport;
+
+},{"./main.js":77}],76:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var main = ( typeof Int8Array === 'function' ) ? Int8Array : null; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = main;
+
+},{}],77:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isInt8Array = require( '@stdlib/assert/is-int8array' );
+var INT8_MAX = require( '@stdlib/constants/math/int8-max' );
+var INT8_MIN = require( '@stdlib/constants/math/int8-min' );
+var GlobalInt8Array = require( './int8array.js' );
+
+
+// MAIN //
+
+/**
+* Tests for native `Int8Array` support.
+*
+* @returns {boolean} boolean indicating if an environment has `Int8Array` support
+*
+* @example
+* var bool = hasInt8ArraySupport();
+* // returns <boolean>
+*/
+function hasInt8ArraySupport() {
+	var bool;
+	var arr;
+
+	if ( typeof GlobalInt8Array !== 'function' ) {
+		return false;
+	}
+	// Test basic support...
+	try {
+		arr = new GlobalInt8Array( [ 1, 3.14, -3.14, INT8_MAX+1 ] );
+		bool = (
+			isInt8Array( arr ) &&
+			arr[ 0 ] === 1 &&
+			arr[ 1 ] === 3 &&     // truncation
+			arr[ 2 ] === -3 &&    // truncation
+			arr[ 3 ] === INT8_MIN // wrap around
+		);
+	} catch ( err ) { // eslint-disable-line no-unused-vars
+		bool = false;
+	}
+	return bool;
+}
+
+
+// EXPORTS //
+
+module.exports = hasInt8ArraySupport;
+
+},{"./int8array.js":76,"@stdlib/assert/is-int8array":135,"@stdlib/constants/math/int8-max":222,"@stdlib/constants/math/int8-min":223}],78:[function(require,module,exports){
+(function (Buffer){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var main = ( typeof Buffer === 'function' ) ? Buffer : null; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = main;
+
+}).call(this,require("buffer").Buffer)
+},{"buffer":415}],79:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test for native `Buffer` support.
+*
+* @module @stdlib/assert/has-node-buffer-support
+*
+* @example
+* var hasNodeBufferSupport = require( '@stdlib/assert/has-node-buffer-support' );
+*
+* var bool = hasNodeBufferSupport();
+* // returns <boolean>
+*/
+
+// MODULES //
+
+var hasNodeBufferSupport = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = hasNodeBufferSupport;
+
+},{"./main.js":80}],80:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isBuffer = require( '@stdlib/assert/is-buffer' );
+var GlobalBuffer = require( './buffer.js' );
+
+
+// MAIN //
+
+/**
+* Tests for native `Buffer` support.
+*
+* @returns {boolean} boolean indicating if an environment has `Buffer` support
+*
+* @example
+* var bool = hasNodeBufferSupport();
+* // returns <boolean>
+*/
+function hasNodeBufferSupport() {
+	var bool;
+	var b;
+
+	if ( typeof GlobalBuffer !== 'function' ) {
+		return false;
+	}
+	// Test basic support...
+	try {
+		if ( typeof GlobalBuffer.from === 'function' ) {
+			b = GlobalBuffer.from( [ 1, 2, 3, 4 ] );
+		} else {
+			b = new GlobalBuffer( [ 1, 2, 3, 4 ] ); // Note: this is deprecated behavior starting in Node v6 (see https://nodejs.org/api/buffer.html#buffer_new_buffer_array)
+		}
+		bool = (
+			isBuffer( b ) &&
+			b[ 0 ] === 1 &&
+			b[ 1 ] === 2 &&
+			b[ 2 ] === 3 &&
+			b[ 3 ] === 4
+		);
+	} catch ( err ) { // eslint-disable-line no-unused-vars
+		bool = false;
+	}
+	return bool;
+}
+
+
+// EXPORTS //
+
+module.exports = hasNodeBufferSupport;
+
+},{"./buffer.js":78,"@stdlib/assert/is-buffer":115}],81:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test whether an object has a specified property.
+*
+* @module @stdlib/assert/has-own-property
+*
+* @example
+* var hasOwnProp = require( '@stdlib/assert/has-own-property' );
+*
+* var beep = {
+*     'boop': true
+* };
+*
+* var bool = hasOwnProp( beep, 'boop' );
+* // returns true
+*
+* bool = hasOwnProp( beep, 'bop' );
+* // returns false
+*/
+
+// MODULES //
+
+var hasOwnProp = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = hasOwnProp;
+
+},{"./main.js":82}],82:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// FUNCTIONS //
+
+var has = Object.prototype.hasOwnProperty;
+
+
+// MAIN //
+
+/**
+* Tests if an object has a specified property.
+*
+* @param {*} value - value to test
+* @param {*} property - property to test
+* @returns {boolean} boolean indicating if an object has a specified property
+*
+* @example
+* var beep = {
+*     'boop': true
+* };
+*
+* var bool = hasOwnProp( beep, 'boop' );
+* // returns true
+*
+* @example
+* var beep = {
+*     'boop': true
+* };
+*
+* var bool = hasOwnProp( beep, 'bap' );
+* // returns false
+*/
+function hasOwnProp( value, property ) {
+	if (
+		value === void 0 ||
+		value === null
+	) {
+		return false;
+	}
+	return has.call( value, property );
+}
+
+
+// EXPORTS //
+
+module.exports = hasOwnProp;
+
+},{}],83:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test whether an object has a specified property, either own or inherited.
+*
+* @module @stdlib/assert/has-property
+*
+* @example
+* var hasProp = require( '@stdlib/assert/has-property' );
+*
+* var beep = {
+*     'boop': true
+* };
+*
+* var bool = hasProp( beep, 'boop' );
+* // returns true
+*
+* bool = hasProp( beep, 'bop' );
+* // returns false
+*/
+
+// MODULES //
+
+var hasProp = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = hasProp;
+
+},{"./main.js":84}],84:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+/**
+* Tests if an object has a specified property, either own or inherited.
+*
+* @param {*} value - value to test
+* @param {*} property - property to test
+* @returns {boolean} boolean indicating if an object has a specified property
+*
+* @example
+* var beep = {
+*     'boop': true
+* };
+*
+* var bool = hasProp( beep, 'boop' );
+* // returns true
+*
+* @example
+* var beep = {
+*     'boop': true
+* };
+*
+* var bool = hasProp( beep, 'bap' );
+* // returns false
+*/
+function hasProp( value, property ) {
+	if ( value === void 0 || value === null ) {
+		return false;
+	}
+	if ( typeof property === 'symbol' ) {
+		return property in Object( value );
+	}
+	return ( String( property ) in Object( value ) );
+}
+
+
+// EXPORTS //
+
+module.exports = hasProp;
+
+},{}],85:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test for native `Symbol` support.
+*
+* @module @stdlib/assert/has-symbol-support
+*
+* @example
+* var hasSymbolSupport = require( '@stdlib/assert/has-symbol-support' );
+*
+* var bool = hasSymbolSupport();
+* // returns <boolean>
+*/
+
+// MODULES //
+
+var hasSymbolSupport = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = hasSymbolSupport;
+
+},{"./main.js":86}],86:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+/**
+* Tests for native `Symbol` support.
+*
+* @returns {boolean} boolean indicating if an environment has `Symbol` support
+*
+* @example
+* var bool = hasSymbolSupport();
+* // returns <boolean>
+*/
+function hasSymbolSupport() {
+	return (
+		typeof Symbol === 'function' &&
+		typeof Symbol( 'foo' ) === 'symbol'
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = hasSymbolSupport;
+
+},{}],87:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test for native `toStringTag` support.
+*
+* @module @stdlib/assert/has-tostringtag-support
+*
+* @example
+* var hasToStringTagSupport = require( '@stdlib/assert/has-tostringtag-support' );
+*
+* var bool = hasToStringTagSupport();
+* // returns <boolean>
+*/
+
+// MODULES //
+
+var hasToStringTagSupport = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = hasToStringTagSupport;
+
+},{"./main.js":88}],88:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var hasSymbols = require( '@stdlib/assert/has-symbol-support' );
+
+
+// VARIABLES //
+
+var FLG = hasSymbols();
+
+
+// MAIN //
+
+/**
+* Tests for native `toStringTag` support.
+*
+* @returns {boolean} boolean indicating if an environment has `toStringTag` support
+*
+* @example
+* var bool = hasToStringTagSupport();
+* // returns <boolean>
+*/
+function hasToStringTagSupport() {
+	return ( FLG && typeof Symbol.toStringTag === 'symbol' );
+}
+
+
+// EXPORTS //
+
+module.exports = hasToStringTagSupport;
+
+},{"@stdlib/assert/has-symbol-support":85}],89:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test for native `Uint16Array` support.
+*
+* @module @stdlib/assert/has-uint16array-support
+*
+* @example
+* var hasUint16ArraySupport = require( '@stdlib/assert/has-uint16array-support' );
+*
+* var bool = hasUint16ArraySupport();
+* // returns <boolean>
+*/
+
+// MODULES //
+
+var hasUint16ArraySupport = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = hasUint16ArraySupport;
+
+},{"./main.js":90}],90:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isUint16Array = require( '@stdlib/assert/is-uint16array' );
+var UINT16_MAX = require( '@stdlib/constants/math/uint16-max' );
+var GlobalUint16Array = require( './uint16array.js' );
+
+
+// MAIN //
+
+/**
+* Tests for native `Uint16Array` support.
+*
+* @returns {boolean} boolean indicating if an environment has `Uint16Array` support
+*
+* @example
+* var bool = hasUint16ArraySupport();
+* // returns <boolean>
+*/
+function hasUint16ArraySupport() {
+	var bool;
+	var arr;
+
+	if ( typeof GlobalUint16Array !== 'function' ) {
+		return false;
+	}
+	// Test basic support...
+	try {
+		arr = [ 1, 3.14, -3.14, UINT16_MAX+1, UINT16_MAX+2 ];
+		arr = new GlobalUint16Array( arr );
+		bool = (
+			isUint16Array( arr ) &&
+			arr[ 0 ] === 1 &&
+			arr[ 1 ] === 3 &&            // truncation
+			arr[ 2 ] === UINT16_MAX-2 && // truncation and wrap around
+			arr[ 3 ] === 0 &&            // wrap around
+			arr[ 4 ] === 1               // wrap around
+		);
+	} catch ( err ) { // eslint-disable-line no-unused-vars
+		bool = false;
+	}
+	return bool;
+}
+
+
+// EXPORTS //
+
+module.exports = hasUint16ArraySupport;
+
+},{"./uint16array.js":91,"@stdlib/assert/is-uint16array":187,"@stdlib/constants/math/uint16-max":224}],91:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var main = ( typeof Uint16Array === 'function' ) ? Uint16Array : null; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = main;
+
+},{}],92:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test for native `Uint32Array` support.
+*
+* @module @stdlib/assert/has-uint32array-support
+*
+* @example
+* var hasUint32ArraySupport = require( '@stdlib/assert/has-uint32array-support' );
+*
+* var bool = hasUint32ArraySupport();
+* // returns <boolean>
+*/
+
+// MODULES //
+
+var hasUint32ArraySupport = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = hasUint32ArraySupport;
+
+},{"./main.js":93}],93:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isUint32Array = require( '@stdlib/assert/is-uint32array' );
+var UINT32_MAX = require( '@stdlib/constants/math/uint32-max' );
+var GlobalUint32Array = require( './uint32array.js' );
+
+
+// MAIN //
+
+/**
+* Tests for native `Uint32Array` support.
+*
+* @returns {boolean} boolean indicating if an environment has `Uint32Array` support
+*
+* @example
+* var bool = hasUint32ArraySupport();
+* // returns <boolean>
+*/
+function hasUint32ArraySupport() {
+	var bool;
+	var arr;
+
+	if ( typeof GlobalUint32Array !== 'function' ) {
+		return false;
+	}
+	// Test basic support...
+	try {
+		arr = [ 1, 3.14, -3.14, UINT32_MAX+1, UINT32_MAX+2 ];
+		arr = new GlobalUint32Array( arr );
+		bool = (
+			isUint32Array( arr ) &&
+			arr[ 0 ] === 1 &&
+			arr[ 1 ] === 3 &&            // truncation
+			arr[ 2 ] === UINT32_MAX-2 && // truncation and wrap around
+			arr[ 3 ] === 0 &&            // wrap around
+			arr[ 4 ] === 1               // wrap around
+		);
+	} catch ( err ) { // eslint-disable-line no-unused-vars
+		bool = false;
+	}
+	return bool;
+}
+
+
+// EXPORTS //
+
+module.exports = hasUint32ArraySupport;
+
+},{"./uint32array.js":94,"@stdlib/assert/is-uint32array":189,"@stdlib/constants/math/uint32-max":225}],94:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var main = ( typeof Uint32Array === 'function' ) ? Uint32Array : null; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = main;
+
+},{}],95:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test for native `Uint8Array` support.
+*
+* @module @stdlib/assert/has-uint8array-support
+*
+* @example
+* var hasUint8ArraySupport = require( '@stdlib/assert/has-uint8array-support' );
+*
+* var bool = hasUint8ArraySupport();
+* // returns <boolean>
+*/
+
+// MODULES //
+
+var hasUint8ArraySupport = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = hasUint8ArraySupport;
+
+},{"./main.js":96}],96:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isUint8Array = require( '@stdlib/assert/is-uint8array' );
+var UINT8_MAX = require( '@stdlib/constants/math/uint8-max' );
+var GlobalUint8Array = require( './uint8array.js' );
+
+
+// MAIN //
+
+/**
+* Tests for native `Uint8Array` support.
+*
+* @returns {boolean} boolean indicating if an environment has `Uint8Array` support
+*
+* @example
+* var bool = hasUint8ArraySupport();
+* // returns <boolean>
+*/
+function hasUint8ArraySupport() {
+	var bool;
+	var arr;
+
+	if ( typeof GlobalUint8Array !== 'function' ) {
+		return false;
+	}
+	// Test basic support...
+	try {
+		arr = [ 1, 3.14, -3.14, UINT8_MAX+1, UINT8_MAX+2 ];
+		arr = new GlobalUint8Array( arr );
+		bool = (
+			isUint8Array( arr ) &&
+			arr[ 0 ] === 1 &&
+			arr[ 1 ] === 3 &&           // truncation
+			arr[ 2 ] === UINT8_MAX-2 && // truncation and wrap around
+			arr[ 3 ] === 0 &&           // wrap around
+			arr[ 4 ] === 1              // wrap around
+		);
+	} catch ( err ) { // eslint-disable-line no-unused-vars
+		bool = false;
+	}
+	return bool;
+}
+
+
+// EXPORTS //
+
+module.exports = hasUint8ArraySupport;
+
+},{"./uint8array.js":97,"@stdlib/assert/is-uint8array":191,"@stdlib/constants/math/uint8-max":226}],97:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var main = ( typeof Uint8Array === 'function' ) ? Uint8Array : null; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = main;
+
+},{}],98:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test for native `Uint8ClampedArray` support.
+*
+* @module @stdlib/assert/has-uint8clampedarray-support
+*
+* @example
+* var hasUint8ClampedArraySupport = require( '@stdlib/assert/has-uint8clampedarray-support' );
+*
+* var bool = hasUint8ClampedArraySupport();
+* // returns <boolean>
+*/
+
+// MODULES //
+
+var hasUint8ClampedArraySupport = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = hasUint8ClampedArraySupport;
+
+},{"./main.js":99}],99:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isUint8ClampedArray = require( '@stdlib/assert/is-uint8clampedarray' );
+var GlobalUint8ClampedArray = require( './uint8clampedarray.js' );
+
+
+// MAIN //
+
+/**
+* Tests for native `Uint8ClampedArray` support.
+*
+* @returns {boolean} boolean indicating if an environment has `Uint8ClampedArray` support
+*
+* @example
+* var bool = hasUint8ClampedArraySupport();
+* // returns <boolean>
+*/
+function hasUint8ClampedArraySupport() { // eslint-disable-line id-length
+	var bool;
+	var arr;
+
+	if ( typeof GlobalUint8ClampedArray !== 'function' ) {
+		return false;
+	}
+	// Test basic support...
+	try {
+		arr = new GlobalUint8ClampedArray( [ -1, 0, 1, 3.14, 4.99, 255, 256 ] );
+		bool = (
+			isUint8ClampedArray( arr ) &&
+			arr[ 0 ] === 0 &&   // clamped
+			arr[ 1 ] === 0 &&
+			arr[ 2 ] === 1 &&
+			arr[ 3 ] === 3 &&   // round to nearest
+			arr[ 4 ] === 5 &&   // round to nearest
+			arr[ 5 ] === 255 &&
+			arr[ 6 ] === 255    // clamped
+		);
+	} catch ( err ) { // eslint-disable-line no-unused-vars
+		bool = false;
+	}
+	return bool;
+}
+
+
+// EXPORTS //
+
+module.exports = hasUint8ClampedArraySupport;
+
+},{"./uint8clampedarray.js":100,"@stdlib/assert/is-uint8clampedarray":193}],100:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var main = ( typeof Uint8ClampedArray === 'function' ) ? Uint8ClampedArray : null; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = main;
+
+},{}],101:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test whether a value has in its prototype chain a specified constructor as a prototype property.
+*
+* @module @stdlib/assert/instance-of
+*
+* @example
+* var instanceOf = require( '@stdlib/assert/instance-of' );
+*
+* var bool = instanceOf( [], Array );
+* // returns true
+*
+* bool = instanceOf( {}, Object ); // exception
+* // returns true
+*
+* bool = instanceOf( 'beep', String );
+* // returns false
+*
+* bool = instanceOf( null, Object );
+* // returns false
+*
+* bool = instanceOf( 5, Object );
+* // returns false
+*/
+
+// MODULES //
+
+var instanceOf = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = instanceOf;
+
+},{"./main.js":102}],102:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+/**
+* Tests whether a value has in its prototype chain a specified constructor as a prototype property.
+*
+* @param {*} value - value to test
+* @param {Function} constructor - constructor to test against
+* @throws {TypeError} constructor must be callable
+* @returns {boolean} boolean indicating whether a value is an instance of a provided constructor
+*
+* @example
+* var bool = instanceOf( [], Array );
+* // returns true
+*
+* @example
+* var bool = instanceOf( {}, Object ); // exception
+* // returns true
+*
+* @example
+* var bool = instanceOf( 'beep', String );
+* // returns false
+*
+* @example
+* var bool = instanceOf( null, Object );
+* // returns false
+*
+* @example
+* var bool = instanceOf( 5, Object );
+* // returns false
+*/
+function instanceOf( value, constructor ) {
+	// TODO: replace with `isCallable` check
+	if ( typeof constructor !== 'function' ) {
+		throw new TypeError( 'invalid argument. `constructor` argument must be callable. Value: `'+constructor+'`.' );
+	}
+	return ( value instanceof constructor );
+}
+
+
+// EXPORTS //
+
+module.exports = instanceOf;
+
+},{}],103:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isArguments = require( './main.js' );
+
+
+// VARIABLES //
+
+var bool;
+
+
+// FUNCTIONS //
+
+/**
+* Detects whether an environment returns the expected internal class of the `arguments` object.
+*
+* @private
+* @returns {boolean} boolean indicating whether an environment behaves as expected
+*
+* @example
+* var bool = detect();
+* // returns <boolean>
+*/
+function detect() {
+	return isArguments( arguments );
+}
+
+
+// MAIN //
+
+bool = detect();
+
+
+// EXPORTS //
+
+module.exports = bool;
+
+},{"./main.js":105}],104:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is an `arguments` object.
+*
+* @module @stdlib/assert/is-arguments
+*
+* @example
+* var isArguments = require( '@stdlib/assert/is-arguments' );
+*
+* function foo() {
+*     return arguments;
+* }
+*
+* var bool = isArguments( foo() );
+* // returns true
+*
+* bool = isArguments( [] );
+* // returns false
+*/
+
+// MODULES //
+
+var hasArgumentsClass = require( './detect.js' );
+var main = require( './main.js' );
+var polyfill = require( './polyfill.js' );
+
+
+// MAIN //
+
+var isArguments;
+if ( hasArgumentsClass ) {
+	isArguments = main;
+} else {
+	isArguments = polyfill;
+}
+
+
+// EXPORTS //
+
+module.exports = isArguments;
+
+},{"./detect.js":103,"./main.js":105,"./polyfill.js":106}],105:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var nativeClass = require( '@stdlib/utils/native-class' );
+
+
+// MAIN //
+
+/**
+* Tests whether a value is an `arguments` object.
+*
+* @private
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether a value is an `arguments` object
+*
+* @example
+* function foo() {
+*     return arguments;
+* }
+*
+* var bool = isArguments( foo() );
+* // returns true
+*
+* @example
+* var bool = isArguments( [] );
+* // returns false
+*/
+function isArguments( value ) {
+	return ( nativeClass( value ) === '[object Arguments]' );
+}
+
+
+// EXPORTS //
+
+module.exports = isArguments;
+
+},{"@stdlib/utils/native-class":389}],106:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var hasOwnProp = require( '@stdlib/assert/has-own-property' );
+var isEnumerableProperty = require( '@stdlib/assert/is-enumerable-property' );
+var isArray = require( '@stdlib/assert/is-array' );
+var isInteger = require( '@stdlib/math/base/assert/is-integer' );
+var MAX_LENGTH = require( '@stdlib/constants/math/uint32-max' );
+
+
+// MAIN //
+
+/**
+* Tests whether a value is an `arguments` object.
+*
+* @private
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether a value is an `arguments` object
+*
+* @example
+* function foo() {
+*     return arguments;
+* }
+*
+* var bool = isArguments( foo() );
+* // returns true
+*
+* @example
+* var bool = isArguments( [] );
+* // returns false
+*/
+function isArguments( value ) {
+	return (
+		value !== null &&
+		typeof value === 'object' &&
+		!isArray( value ) &&
+		typeof value.length === 'number' &&
+		isInteger( value.length ) &&
+		value.length >= 0 &&
+		value.length <= MAX_LENGTH &&
+		hasOwnProp( value, 'callee' ) &&
+		!isEnumerableProperty( value, 'callee' )
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isArguments;
+
+},{"@stdlib/assert/has-own-property":81,"@stdlib/assert/is-array":107,"@stdlib/assert/is-enumerable-property":120,"@stdlib/constants/math/uint32-max":225,"@stdlib/math/base/assert/is-integer":231}],107:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is an array.
+*
+* @module @stdlib/assert/is-array
+*
+* @example
+* var isArray = require( '@stdlib/assert/is-array' );
+*
+* var bool = isArray( [] );
+* // returns true
+*
+* bool = isArray( {} );
+* // returns false
+*/
+
+// MODULES //
+
+var isArray = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isArray;
+
+},{"./main.js":108}],108:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var nativeClass = require( '@stdlib/utils/native-class' );
+
+
+// VARIABLES //
+
+var f;
+
+
+// FUNCTIONS //
+
+/**
+* Tests if a value is an array.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is an array
+*
+* @example
+* var bool = isArray( [] );
+* // returns true
+*
+* @example
+* var bool = isArray( {} );
+* // returns false
+*/
+function isArray( value ) {
+	return ( nativeClass( value ) === '[object Array]' );
+}
+
+
+// MAIN //
+
+if ( Array.isArray ) {
+	f = Array.isArray;
+} else {
+	f = isArray;
+}
+
+
+// EXPORTS //
+
+module.exports = f;
+
+},{"@stdlib/utils/native-class":389}],109:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is a boolean.
+*
+* @module @stdlib/assert/is-boolean
+*
+* @example
+* var isBoolean = require( '@stdlib/assert/is-boolean' );
+*
+* var bool = isBoolean( false );
+* // returns true
+*
+* bool = isBoolean( new Boolean( false ) );
+* // returns true
+*
+* @example
+* // Use interface to check for boolean primitives...
+* var isBoolean = require( '@stdlib/assert/is-boolean' ).isPrimitive;
+*
+* var bool = isBoolean( false );
+* // returns true
+*
+* bool = isBoolean( new Boolean( true ) );
+* // returns false
+*
+* @example
+* // Use interface to check for boolean objects...
+* var isBoolean = require( '@stdlib/assert/is-boolean' ).isObject;
+*
+* var bool = isBoolean( true );
+* // returns false
+*
+* bool = isBoolean( new Boolean( false ) );
+* // returns true
+*/
+
+// MODULES //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var isBoolean = require( './main.js' );
+var isPrimitive = require( './primitive.js' );
+var isObject = require( './object.js' );
+
+
+// MAIN //
+
+setReadOnly( isBoolean, 'isPrimitive', isPrimitive );
+setReadOnly( isBoolean, 'isObject', isObject );
+
+
+// EXPORTS //
+
+module.exports = isBoolean;
+
+},{"./main.js":110,"./object.js":111,"./primitive.js":112,"@stdlib/utils/define-nonenumerable-read-only-property":350}],110:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isPrimitive = require( './primitive.js' );
+var isObject = require( './object.js' );
+
+
+// MAIN //
+
+/**
+* Tests if a value is a boolean.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is a boolean
+*
+* @example
+* var bool = isBoolean( false );
+* // returns true
+*
+* @example
+* var bool = isBoolean( true );
+* // returns true
+*
+* @example
+* var bool = isBoolean( new Boolean( false ) );
+* // returns true
+*
+* @example
+* var bool = isBoolean( new Boolean( true ) );
+* // returns true
+*/
+function isBoolean( value ) {
+	return ( isPrimitive( value ) || isObject( value ) );
+}
+
+
+// EXPORTS //
+
+module.exports = isBoolean;
+
+},{"./object.js":111,"./primitive.js":112}],111:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var hasToStringTag = require( '@stdlib/assert/has-tostringtag-support' );
+var nativeClass = require( '@stdlib/utils/native-class' );
+var test = require( './try2serialize.js' );
+
+
+// VARIABLES //
+
+var FLG = hasToStringTag();
+
+
+// MAIN //
+
+/**
+* Tests if a value is a boolean object.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a value is a boolean object
+*
+* @example
+* var bool = isBoolean( true );
+* // returns false
+*
+* @example
+* var bool = isBoolean( new Boolean( false ) );
+* // returns true
+*/
+function isBoolean( value ) {
+	if ( typeof value === 'object' ) {
+		if ( value instanceof Boolean ) {
+			return true;
+		}
+		if ( FLG ) {
+			return test( value );
+		}
+		return ( nativeClass( value ) === '[object Boolean]' );
+	}
+	return false;
+}
+
+
+// EXPORTS //
+
+module.exports = isBoolean;
+
+},{"./try2serialize.js":114,"@stdlib/assert/has-tostringtag-support":87,"@stdlib/utils/native-class":389}],112:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Tests if a value is a boolean primitive.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a value is a boolean primitive
+*
+* @example
+* var bool = isBoolean( true );
+* // returns true
+*
+* @example
+* var bool = isBoolean( false );
+* // returns true
+*
+* @example
+* var bool = isBoolean( new Boolean( true ) );
+* // returns false
+*/
+function isBoolean( value ) {
+	return ( typeof value === 'boolean' );
+}
+
+
+// EXPORTS //
+
+module.exports = isBoolean;
+
+},{}],113:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// eslint-disable-next-line stdlib/no-redeclare
+var toString = Boolean.prototype.toString; // non-generic
+
+
+// EXPORTS //
+
+module.exports = toString;
+
+},{}],114:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var toString = require( './tostring.js' ); // eslint-disable-line stdlib/no-redeclare
+
+
+// MAIN //
+
+/**
+* Attempts to serialize a value to a string.
+*
+* @private
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a value can be serialized
+*/
+function test( value ) {
+	try {
+		toString.call( value );
+		return true;
+	} catch ( err ) { // eslint-disable-line no-unused-vars
+		return false;
+	}
+}
+
+
+// EXPORTS //
+
+module.exports = test;
+
+},{"./tostring.js":113}],115:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is a Buffer instance.
+*
+* @module @stdlib/assert/is-buffer
+*
+* @example
+* var isBuffer = require( '@stdlib/assert/is-buffer' );
+*
+* var v = isBuffer( new Buffer( 'beep' ) );
+* // returns true
+*
+* v = isBuffer( {} );
+* // returns false
+*/
+
+// MODULES //
+
+var isBuffer = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isBuffer;
+
+},{"./main.js":116}],116:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isObjectLike = require( '@stdlib/assert/is-object-like' );
+
+
+// MAIN //
+
+/**
+* Tests if a value is a Buffer instance.
+*
+* @param {*} value - value to validate
+* @returns {boolean} boolean indicating if a value is a Buffer instance
+*
+* @example
+* var v = isBuffer( new Buffer( 'beep' ) );
+* // returns true
+*
+* @example
+* var v = isBuffer( new Buffer( [1,2,3,4] ) );
+* // returns true
+*
+* @example
+* var v = isBuffer( {} );
+* // returns false
+*
+* @example
+* var v = isBuffer( [] );
+* // returns false
+*/
+function isBuffer( value ) {
+	return (
+		isObjectLike( value ) &&
+		(
+			// eslint-disable-next-line no-underscore-dangle
+			value._isBuffer || // for envs missing Object.prototype.constructor (e.g., Safari 5-7)
+			(
+				value.constructor &&
+
+				// WARNING: `typeof` is not a foolproof check, as certain envs consider RegExp and NodeList instances to be functions
+				typeof value.constructor.isBuffer === 'function' &&
+				value.constructor.isBuffer( value )
+			)
+		)
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isBuffer;
+
+},{"@stdlib/assert/is-object-like":159}],117:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is a collection.
+*
+* @module @stdlib/assert/is-collection
+*
+* @example
+* var isCollection = require( '@stdlib/assert/is-collection' );
+*
+* var bool = isCollection( [] );
+* // returns true
+*
+* bool = isCollection( {} );
+* // returns false
+*/
+
+// MODULES //
+
+var isCollection = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isCollection;
+
+},{"./main.js":118}],118:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isInteger = require( '@stdlib/math/base/assert/is-integer' );
+var MAX_LENGTH = require( '@stdlib/constants/array/max-typed-array-length' );
+
+
+// MAIN //
+
+/**
+* Tests if a value is a collection.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether a value is a collection
+*
+* @example
+* var bool = isCollection( [] );
+* // returns true
+*
+* @example
+* var bool = isCollection( {} );
+* // returns false
+*/
+function isCollection( value ) {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		typeof value.length === 'number' &&
+		isInteger( value.length ) &&
+		value.length >= 0 &&
+		value.length <= MAX_LENGTH
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isCollection;
+
+},{"@stdlib/constants/array/max-typed-array-length":207,"@stdlib/math/base/assert/is-integer":231}],119:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isEnum = require( './native.js' );
+
+
+// VARIABLES //
+
+var bool;
+
+
+// FUNCTIONS //
+
+/**
+* Detects whether an environment has a bug where String indices are not detected as "enumerable" properties. Observed in Node v0.10.
+*
+* @private
+* @returns {boolean} boolean indicating whether an environment has the bug
+*/
+function detect() {
+	return !isEnum.call( 'beep', '0' );
+}
+
+
+// MAIN //
+
+bool = detect();
+
+
+// EXPORTS //
+
+module.exports = bool;
+
+},{"./native.js":122}],120:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test whether an object's own property is enumerable.
+*
+* @module @stdlib/assert/is-enumerable-property
+*
+* @example
+* var isEnumerableProperty = require( '@stdlib/assert/is-enumerable-property' );
+*
+* var beep = {
+*     'boop': true
+* };
+*
+* var bool = isEnumerableProperty( beep, 'boop' );
+* // returns true
+*
+* bool = isEnumerableProperty( beep, 'hasOwnProperty' );
+* // returns false
+*/
+
+// MODULES //
+
+var isEnumerableProperty = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isEnumerableProperty;
+
+},{"./main.js":121}],121:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isString = require( '@stdlib/assert/is-string' );
+var isnan = require( '@stdlib/assert/is-nan' ).isPrimitive;
+var isInteger = require( '@stdlib/assert/is-integer' ).isPrimitive;
+var isEnum = require( './native.js' );
+var hasStringEnumBug = require( './has_string_enumerability_bug.js' );
+
+
+// MAIN //
+
+/**
+* Tests if an object's own property is enumerable.
+*
+* @param {*} value - value to test
+* @param {*} property - property to test
+* @returns {boolean} boolean indicating if an object property is enumerable
+*
+* @example
+* var beep = {
+*     'boop': true
+* };
+*
+* var bool = isEnumerableProperty( beep, 'boop' );
+* // returns true
+*
+* @example
+* var beep = {
+*     'boop': true
+* };
+*
+* var bool = isEnumerableProperty( beep, 'hasOwnProperty' );
+* // returns false
+*/
+function isEnumerableProperty( value, property ) {
+	var bool;
+	if (
+		value === void 0 ||
+		value === null
+	) {
+		return false;
+	}
+	bool = isEnum.call( value, property );
+	if ( !bool && hasStringEnumBug && isString( value ) ) {
+		// Note: we only check for indices, as properties attached to a `String` object are properly detected as enumerable above.
+		property = +property;
+		return (
+			!isnan( property ) &&
+			isInteger( property ) &&
+			property >= 0 &&
+			property < value.length
+		);
+	}
+	return bool;
+}
+
+
+// EXPORTS //
+
+module.exports = isEnumerableProperty;
+
+},{"./has_string_enumerability_bug.js":119,"./native.js":122,"@stdlib/assert/is-integer":137,"@stdlib/assert/is-nan":145,"@stdlib/assert/is-string":177}],122:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+/**
+* Tests if an object's own property is enumerable.
+*
+* @private
+* @name isEnumerableProperty
+* @type {Function}
+* @param {*} value - value to test
+* @param {*} property - property to test
+* @returns {boolean} boolean indicating if an object property is enumerable
+*
+* @example
+* var beep = {
+*     'boop': true
+* };
+*
+* var bool = isEnumerableProperty( beep, 'boop' );
+* // returns true
+*
+* @example
+* var beep = {
+*     'boop': true
+* };
+*
+* var bool = isEnumerableProperty( beep, 'hasOwnProperty' );
+* // returns false
+*/
+var isEnumerableProperty = Object.prototype.propertyIsEnumerable;
+
+
+// EXPORTS //
+
+module.exports = isEnumerableProperty;
+
+},{}],123:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is an `Error` object.
+*
+* @module @stdlib/assert/is-error
+*
+* @example
+* var isError = require( '@stdlib/assert/is-error' );
+*
+* var bool = isError( new Error( 'beep' ) );
+* // returns true
+*
+* bool = isError( {} );
+* // returns false
+*/
+
+// MODULES //
+
+var isError = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isError;
+
+},{"./main.js":124}],124:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var getPrototypeOf = require( '@stdlib/utils/get-prototype-of' );
+var nativeClass = require( '@stdlib/utils/native-class' );
+
+
+// MAIN //
+
+/**
+* Tests if a value is an `Error` object.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether a value is an `Error` object
+*
+* @example
+* var bool = isError( new Error( 'beep' ) );
+* // returns true
+*
+* @example
+* var bool = isError( {} );
+* // returns false
+*/
+function isError( value ) {
+	if ( typeof value !== 'object' || value === null ) {
+		return false;
+	}
+	// Check for `Error` objects from the same realm (same Node.js `vm` or same `Window` object)...
+	if ( value instanceof Error ) {
+		return true;
+	}
+	// Walk the prototype tree until we find an object having the desired native class...
+	while ( value ) {
+		if ( nativeClass( value ) === '[object Error]' ) {
+			return true;
+		}
+		value = getPrototypeOf( value );
+	}
+	return false;
+}
+
+
+// EXPORTS //
+
+module.exports = isError;
+
+},{"@stdlib/utils/get-prototype-of":361,"@stdlib/utils/native-class":389}],125:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is a Float32Array.
+*
+* @module @stdlib/assert/is-float32array
+*
+* @example
+* var isFloat32Array = require( '@stdlib/assert/is-float32array' );
+*
+* var bool = isFloat32Array( new Float32Array( 10 ) );
+* // returns true
+*
+* bool = isFloat32Array( [] );
+* // returns false
+*/
+
+// MODULES //
+
+var isFloat32Array = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isFloat32Array;
+
+},{"./main.js":126}],126:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var nativeClass = require( '@stdlib/utils/native-class' );
+
+
+// VARIABLES //
+
+var hasFloat32Array = ( typeof Float32Array === 'function' );// eslint-disable-line stdlib/require-globals
+
+
+// MAIN //
+
+/**
+* Tests if a value is a Float32Array.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is a Float32Array
+*
+* @example
+* var bool = isFloat32Array( new Float32Array( 10 ) );
+* // returns true
+*
+* @example
+* var bool = isFloat32Array( [] );
+* // returns false
+*/
+function isFloat32Array( value ) {
+	return (
+		( hasFloat32Array && value instanceof Float32Array ) || // eslint-disable-line stdlib/require-globals
+		nativeClass( value ) === '[object Float32Array]'
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isFloat32Array;
+
+},{"@stdlib/utils/native-class":389}],127:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is a Float64Array.
+*
+* @module @stdlib/assert/is-float64array
+*
+* @example
+* var isFloat64Array = require( '@stdlib/assert/is-float64array' );
+*
+* var bool = isFloat64Array( new Float64Array( 10 ) );
+* // returns true
+*
+* bool = isFloat64Array( [] );
+* // returns false
+*/
+
+// MODULES //
+
+var isFloat64Array = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isFloat64Array;
+
+},{"./main.js":128}],128:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var nativeClass = require( '@stdlib/utils/native-class' );
+
+
+// VARIABLES //
+
+var hasFloat64Array = ( typeof Float64Array === 'function' ); // eslint-disable-line stdlib/require-globals
+
+
+// MAIN //
+
+/**
+* Tests if a value is a Float64Array.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is a Float64Array
+*
+* @example
+* var bool = isFloat64Array( new Float64Array( 10 ) );
+* // returns true
+*
+* @example
+* var bool = isFloat64Array( [] );
+* // returns false
+*/
+function isFloat64Array( value ) {
+	return (
+		( hasFloat64Array && value instanceof Float64Array ) || // eslint-disable-line stdlib/require-globals
+		nativeClass( value ) === '[object Float64Array]'
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isFloat64Array;
+
+},{"@stdlib/utils/native-class":389}],129:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is a function.
+*
+* @module @stdlib/assert/is-function
+*
+* @example
+* var isFunction = require( '@stdlib/assert/is-function' );
+*
+* function beep() {
+*     return 'beep';
+* }
+*
+* var bool = isFunction( beep );
+* // returns true
+*/
+
+// MODULES //
+
+var isFunction = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isFunction;
+
+},{"./main.js":130}],130:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var typeOf = require( '@stdlib/utils/type-of' );
+
+
+// MAIN //
+
+/**
+* Tests if a value is a function.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is a function
+*
+* @example
+* function beep() {
+*     return 'beep';
+* }
+*
+* var bool = isFunction( beep );
+* // returns true
+*/
+function isFunction( value ) {
+	// Note: cannot use `typeof` directly, as various browser engines incorrectly return `'function'` when operating on non-function objects, such as regular expressions and NodeLists.
+	return ( typeOf( value ) === 'function' );
+}
+
+
+// EXPORTS //
+
+module.exports = isFunction;
+
+},{"@stdlib/utils/type-of":410}],131:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is an Int16Array.
+*
+* @module @stdlib/assert/is-int16array
+*
+* @example
+* var isInt16Array = require( '@stdlib/assert/is-int16array' );
+*
+* var bool = isInt16Array( new Int16Array( 10 ) );
+* // returns true
+*
+* bool = isInt16Array( [] );
+* // returns false
+*/
+
+// MODULES //
+
+var isInt16Array = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isInt16Array;
+
+},{"./main.js":132}],132:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var nativeClass = require( '@stdlib/utils/native-class' );
+
+
+// VARIABLES //
+
+var hasInt16Array = ( typeof Int16Array === 'function' ); // eslint-disable-line stdlib/require-globals
+
+
+// MAIN //
+
+/**
+* Tests if a value is an Int16Array.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is an Int16Array
+*
+* @example
+* var bool = isInt16Array( new Int16Array( 10 ) );
+* // returns true
+*
+* @example
+* var bool = isInt16Array( [] );
+* // returns false
+*/
+function isInt16Array( value ) {
+	return (
+		( hasInt16Array && value instanceof Int16Array ) || // eslint-disable-line stdlib/require-globals
+		nativeClass( value ) === '[object Int16Array]'
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isInt16Array;
+
+},{"@stdlib/utils/native-class":389}],133:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is an Int32Array.
+*
+* @module @stdlib/assert/is-int32array
+*
+* @example
+* var isInt32Array = require( '@stdlib/assert/is-int32array' );
+*
+* var bool = isInt32Array( new Int32Array( 10 ) );
+* // returns true
+*
+* bool = isInt32Array( [] );
+* // returns false
+*/
+
+// MODULES //
+
+var isInt32Array = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isInt32Array;
+
+},{"./main.js":134}],134:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var nativeClass = require( '@stdlib/utils/native-class' );
+
+
+// VARIABLES //
+
+var hasInt32Array = ( typeof Int32Array === 'function' ); // eslint-disable-line stdlib/require-globals
+
+
+// MAIN //
+
+/**
+* Tests if a value is an Int32Array.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is an Int32Array
+*
+* @example
+* var bool = isInt32Array( new Int32Array( 10 ) );
+* // returns true
+*
+* @example
+* var bool = isInt32Array( [] );
+* // returns false
+*/
+function isInt32Array( value ) {
+	return (
+		( hasInt32Array && value instanceof Int32Array ) || // eslint-disable-line stdlib/require-globals
+		nativeClass( value ) === '[object Int32Array]'
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isInt32Array;
+
+},{"@stdlib/utils/native-class":389}],135:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is an Int8Array.
+*
+* @module @stdlib/assert/is-int8array
+*
+* @example
+* var isInt8Array = require( '@stdlib/assert/is-int8array' );
+*
+* var bool = isInt8Array( new Int8Array( 10 ) );
+* // returns true
+*
+* bool = isInt8Array( [] );
+* // returns false
+*/
+
+// MODULES //
+
+var isInt8Array = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isInt8Array;
+
+},{"./main.js":136}],136:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var nativeClass = require( '@stdlib/utils/native-class' );
+
+
+// VARIABLES //
+
+var hasInt8Array = ( typeof Int8Array === 'function' ); // eslint-disable-line stdlib/require-globals
+
+
+// MAIN //
+
+/**
+* Tests if a value is an Int8Array.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is an Int8Array
+*
+* @example
+* var bool = isInt8Array( new Int8Array( 10 ) );
+* // returns true
+*
+* @example
+* var bool = isInt8Array( [] );
+* // returns false
+*/
+function isInt8Array( value ) {
+	return (
+		( hasInt8Array && value instanceof Int8Array ) || // eslint-disable-line stdlib/require-globals
+		nativeClass( value ) === '[object Int8Array]'
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isInt8Array;
+
+},{"@stdlib/utils/native-class":389}],137:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is an integer.
+*
+* @module @stdlib/assert/is-integer
+*
+* @example
+* var isInteger = require( '@stdlib/assert/is-integer' );
+*
+* var bool = isInteger( 5.0 );
+* // returns true
+*
+* bool = isInteger( new Number( 5.0 ) );
+* // returns true
+*
+* bool = isInteger( -3.14 );
+* // returns false
+*
+* bool = isInteger( null );
+* // returns false
+*
+* @example
+* // Use interface to check for integer primitives...
+* var isInteger = require( '@stdlib/assert/is-integer' ).isPrimitive;
+*
+* var bool = isInteger( -3.0 );
+* // returns true
+*
+* bool = isInteger( new Number( -3.0 ) );
+* // returns false
+*
+* @example
+* // Use interface to check for integer objects...
+* var isInteger = require( '@stdlib/assert/is-integer' ).isObject;
+*
+* var bool = isInteger( 3.0 );
+* // returns false
+*
+* bool = isInteger( new Number( 3.0 ) );
+* // returns true
+*/
+
+// MODULES //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var isInteger = require( './main.js' );
+var isPrimitive = require( './primitive.js' );
+var isObject = require( './object.js' );
+
+
+// MAIN //
+
+setReadOnly( isInteger, 'isPrimitive', isPrimitive );
+setReadOnly( isInteger, 'isObject', isObject );
+
+
+// EXPORTS //
+
+module.exports = isInteger;
+
+},{"./main.js":139,"./object.js":140,"./primitive.js":141,"@stdlib/utils/define-nonenumerable-read-only-property":350}],138:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var PINF = require( '@stdlib/constants/math/float64-pinf' );
+var NINF = require( '@stdlib/constants/math/float64-ninf' );
+var isInt = require( '@stdlib/math/base/assert/is-integer' );
+
+
+// MAIN //
+
+/**
+* Tests if a number primitive is an integer value.
+*
+* @private
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a number primitive is an integer value
+*/
+function isInteger( value ) {
+	return (
+		value < PINF &&
+		value > NINF &&
+		isInt( value )
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isInteger;
+
+},{"@stdlib/constants/math/float64-ninf":215,"@stdlib/constants/math/float64-pinf":216,"@stdlib/math/base/assert/is-integer":231}],139:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isPrimitive = require( './primitive.js' );
+var isObject = require( './object.js' );
+
+
+// MAIN //
+
+/**
+* Tests if a value is an integer.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is an integer
+*
+* @example
+* var bool = isInteger( 5.0 );
+* // returns true
+*
+* @example
+* var bool = isInteger( new Number( 5.0 ) );
+* // returns true
+*
+* @example
+* var bool = isInteger( -3.14 );
+* // returns false
+*
+* @example
+* var bool = isInteger( null );
+* // returns false
+*/
+function isInteger( value ) {
+	return ( isPrimitive( value ) || isObject( value ) );
+}
+
+
+// EXPORTS //
+
+module.exports = isInteger;
+
+},{"./object.js":140,"./primitive.js":141}],140:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isNumber = require( '@stdlib/assert/is-number' ).isObject;
+var isInt = require( './integer.js' );
+
+
+// MAIN //
+
+/**
+* Tests if a value is a number object having an integer value.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a value is a number object having an integer value
+*
+* @example
+* var bool = isInteger( 3.0 );
+* // returns false
+*
+* @example
+* var bool = isInteger( new Number( 3.0 ) );
+* // returns true
+*/
+function isInteger( value ) {
+	return (
+		isNumber( value ) &&
+		isInt( value.valueOf() )
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isInteger;
+
+},{"./integer.js":138,"@stdlib/assert/is-number":153}],141:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isNumber = require( '@stdlib/assert/is-number' ).isPrimitive;
+var isInt = require( './integer.js' );
+
+
+// MAIN //
+
+/**
+* Tests if a value is a number primitive having an integer value.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a value is a number primitive having an integer value
+*
+* @example
+* var bool = isInteger( -3.0 );
+* // returns true
+*
+* @example
+* var bool = isInteger( new Number( -3.0 ) );
+* // returns false
+*/
+function isInteger( value ) {
+	return (
+		isNumber( value ) &&
+		isInt( value )
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isInteger;
+
+},{"./integer.js":138,"@stdlib/assert/is-number":153}],142:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var Uint8Array = require( '@stdlib/array/uint8' );
+var Uint16Array = require( '@stdlib/array/uint16' );
+
+
+// MAIN //
+
+var ctors = {
+	'uint16': Uint16Array,
+	'uint8': Uint8Array
+};
+
+
+// EXPORTS //
+
+module.exports = ctors;
+
+},{"@stdlib/array/uint16":45,"@stdlib/array/uint8":51}],143:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Return a boolean indicating if an environment is little endian.
+*
+* @module @stdlib/assert/is-little-endian
+*
+* @example
+* var IS_LITTLE_ENDIAN = require( '@stdlib/assert/is-little-endian' );
+*
+* var bool = IS_LITTLE_ENDIAN;
+* // returns <boolean>
+*/
+
+// MODULES //
+
+var IS_LITTLE_ENDIAN = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = IS_LITTLE_ENDIAN;
+
+},{"./main.js":144}],144:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var ctors = require( './ctors.js' );
+
+
+// VARIABLES //
+
+var bool;
+
+
+// FUNCTIONS //
+
+/**
+* Returns a boolean indicating if an environment is little endian.
+*
+* @private
+* @returns {boolean} boolean indicating if an environment is little endian
+*
+* @example
+* var bool = isLittleEndian();
+* // returns <boolean>
+*/
+function isLittleEndian() {
+	var uint16view;
+	var uint8view;
+
+	uint16view = new ctors[ 'uint16' ]( 1 );
+
+	/*
+	* Set the uint16 view to a value having distinguishable lower and higher order words.
+	*
+	* 4660 => 0x1234 => 0x12 0x34 => '00010010 00110100' => (0x12,0x34) == (18,52)
+	*/
+	uint16view[ 0 ] = 0x1234;
+
+	// Create a uint8 view on top of the uint16 buffer:
+	uint8view = new ctors[ 'uint8' ]( uint16view.buffer );
+
+	// If little endian, the least significant byte will be first...
+	return ( uint8view[ 0 ] === 0x34 );
+}
+
+
+// MAIN //
+
+bool = isLittleEndian();
+
+
+// EXPORTS //
+
+module.exports = bool;
+
+},{"./ctors.js":142}],145:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is `NaN`.
+*
+* @module @stdlib/assert/is-nan
+*
+* @example
+* var isnan = require( '@stdlib/assert/is-nan' );
+*
+* var bool = isnan( NaN );
+* // returns true
+*
+* bool = isnan( new Number( NaN ) );
+* // returns true
+*
+* bool = isnan( 3.14 );
+* // returns false
+*
+* bool = isnan( null );
+* // returns false
+*
+* @example
+* var isnan = require( '@stdlib/assert/is-nan' ).isPrimitive;
+*
+* var bool = isnan( NaN );
+* // returns true
+*
+* bool = isnan( 3.14 );
+* // returns false
+*
+* bool = isnan( new Number( NaN ) );
+* // returns false
+*
+* @example
+* var isnan = require( '@stdlib/assert/is-nan' ).isObject;
+*
+* var bool = isnan( NaN );
+* // returns false
+*
+* bool = isnan( new Number( NaN ) );
+* // returns true
+*/
+
+// MODULES //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var isnan = require( './main.js' );
+var isPrimitive = require( './primitive.js' );
+var isObject = require( './object.js' );
+
+
+// MAIN //
+
+setReadOnly( isnan, 'isPrimitive', isPrimitive );
+setReadOnly( isnan, 'isObject', isObject );
+
+
+// EXPORTS //
+
+module.exports = isnan;
+
+},{"./main.js":146,"./object.js":147,"./primitive.js":148,"@stdlib/utils/define-nonenumerable-read-only-property":350}],146:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isPrimitive = require( './primitive.js' );
+var isObject = require( './object.js' );
+
+
+// MAIN //
+
+/**
+* Tests if a value is `NaN`.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is `NaN`
+*
+* @example
+* var bool = isnan( NaN );
+* // returns true
+*
+* @example
+* var bool = isnan( new Number( NaN ) );
+* // returns true
+*
+* @example
+* var bool = isnan( 3.14 );
+* // returns false
+*
+* @example
+* var bool = isnan( null );
+* // returns false
+*/
+function isnan( value ) {
+	return ( isPrimitive( value ) || isObject( value ) );
+}
+
+
+// EXPORTS //
+
+module.exports = isnan;
+
+},{"./object.js":147,"./primitive.js":148}],147:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isNumber = require( '@stdlib/assert/is-number' ).isObject;
+var isNan = require( '@stdlib/math/base/assert/is-nan' );
+
+
+// MAIN //
+
+/**
+* Tests if a value is a number object having a value of `NaN`.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a value is a number object having a value of `NaN`
+*
+* @example
+* var bool = isnan( NaN );
+* // returns false
+*
+* @example
+* var bool = isnan( new Number( NaN ) );
+* // returns true
+*/
+function isnan( value ) {
+	return (
+		isNumber( value ) &&
+		isNan( value.valueOf() )
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isnan;
+
+},{"@stdlib/assert/is-number":153,"@stdlib/math/base/assert/is-nan":233}],148:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isNumber = require( '@stdlib/assert/is-number' ).isPrimitive;
+var isNan = require( '@stdlib/math/base/assert/is-nan' );
+
+
+// MAIN //
+
+/**
+* Tests if a value is a `NaN` number primitive.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a value is a `NaN` number primitive
+*
+* @example
+* var bool = isnan( NaN );
+* // returns true
+*
+* @example
+* var bool = isnan( 3.14 );
+* // returns false
+*
+* @example
+* var bool = isnan( new Number( NaN ) );
+* // returns false
+*/
+function isnan( value ) {
+	return (
+		isNumber( value ) &&
+		isNan( value )
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isnan;
+
+},{"@stdlib/assert/is-number":153,"@stdlib/math/base/assert/is-nan":233}],149:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is a nonnegative integer.
+*
+* @module @stdlib/assert/is-nonnegative-integer
+*
+* @example
+* var isNonNegativeInteger = require( '@stdlib/assert/is-nonnegative-integer' );
+*
+* var bool = isNonNegativeInteger( 5.0 );
+* // returns true
+*
+* bool = isNonNegativeInteger( new Number( 5.0 ) );
+* // returns true
+*
+* bool = isNonNegativeInteger( -5.0 );
+* // returns false
+*
+* bool = isNonNegativeInteger( 3.14 );
+* // returns false
+*
+* bool = isNonNegativeInteger( null );
+* // returns false
+*
+* @example
+* var isNonNegativeInteger = require( '@stdlib/assert/is-nonnegative-integer' ).isPrimitive;
+*
+* var bool = isNonNegativeInteger( 3.0 );
+* // returns true
+*
+* bool = isNonNegativeInteger( new Number( 3.0 ) );
+* // returns false
+*
+* @example
+* var isNonNegativeInteger = require( '@stdlib/assert/is-nonnegative-integer' ).isObject;
+*
+* var bool = isNonNegativeInteger( 3.0 );
+* // returns false
+*
+* bool = isNonNegativeInteger( new Number( 3.0 ) );
+* // returns true
+*/
+
+// MODULES //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var isNonNegativeInteger = require( './main.js' );
+var isPrimitive = require( './primitive.js' );
+var isObject = require( './object.js' );
+
+
+// MAIN //
+
+setReadOnly( isNonNegativeInteger, 'isPrimitive', isPrimitive );
+setReadOnly( isNonNegativeInteger, 'isObject', isObject );
+
+
+// EXPORTS //
+
+module.exports = isNonNegativeInteger;
+
+},{"./main.js":150,"./object.js":151,"./primitive.js":152,"@stdlib/utils/define-nonenumerable-read-only-property":350}],150:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isPrimitive = require( './primitive.js' );
+var isObject = require( './object.js' );
+
+
+// MAIN //
+
+/**
+* Tests if a value is a nonnegative integer.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is a nonnegative integer
+*
+* @example
+* var bool = isNonNegativeInteger( 5.0 );
+* // returns true
+*
+* @example
+* var bool = isNonNegativeInteger( new Number( 5.0 ) );
+* // returns true
+*
+* @example
+* var bool = isNonNegativeInteger( -5.0 );
+* // returns false
+*
+* @example
+* var bool = isNonNegativeInteger( 3.14 );
+* // returns false
+*
+* @example
+* var bool = isNonNegativeInteger( null );
+* // returns false
+*/
+function isNonNegativeInteger( value ) {
+	return ( isPrimitive( value ) || isObject( value ) );
+}
+
+
+// EXPORTS //
+
+module.exports = isNonNegativeInteger;
+
+},{"./object.js":151,"./primitive.js":152}],151:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isInteger = require( '@stdlib/assert/is-integer' ).isObject;
+
+
+// MAIN //
+
+/**
+* Tests if a value is a number object having a nonnegative integer value.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a value is a number object having a nonnegative integer value
+*
+* @example
+* var bool = isNonNegativeInteger( 3.0 );
+* // returns false
+*
+* @example
+* var bool = isNonNegativeInteger( new Number( 3.0 ) );
+* // returns true
+*/
+function isNonNegativeInteger( value ) {
+	return (
+		isInteger( value ) &&
+		value.valueOf() >= 0
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isNonNegativeInteger;
+
+},{"@stdlib/assert/is-integer":137}],152:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isInteger = require( '@stdlib/assert/is-integer' ).isPrimitive;
+
+
+// MAIN //
+
+/**
+* Tests if a value is a number primitive having a nonnegative integer value.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a value is a number primitive having a nonnegative integer value
+*
+* @example
+* var bool = isNonNegativeInteger( 3.0 );
+* // returns true
+*
+* @example
+* var bool = isNonNegativeInteger( new Number( 3.0 ) );
+* // returns false
+*/
+function isNonNegativeInteger( value ) {
+	return (
+		isInteger( value ) &&
+		value >= 0
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isNonNegativeInteger;
+
+},{"@stdlib/assert/is-integer":137}],153:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is a number.
+*
+* @module @stdlib/assert/is-number
+*
+* @example
+* var isNumber = require( '@stdlib/assert/is-number' );
+*
+* var bool = isNumber( 3.14 );
+* // returns true
+*
+* bool = isNumber( new Number( 3.14 ) );
+* // returns true
+*
+* bool = isNumber( NaN );
+* // returns true
+*
+* bool = isNumber( null );
+* // returns false
+*
+* @example
+* var isNumber = require( '@stdlib/assert/is-number' ).isPrimitive;
+*
+* var bool = isNumber( 3.14 );
+* // returns true
+*
+* bool = isNumber( NaN );
+* // returns true
+*
+* bool = isNumber( new Number( 3.14 ) );
+* // returns false
+*
+* @example
+* var isNumber = require( '@stdlib/assert/is-number' ).isObject;
+*
+* var bool = isNumber( 3.14 );
+* // returns false
+*
+* bool = isNumber( new Number( 3.14 ) );
+* // returns true
+*/
+
+// MODULES //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var isNumber = require( './main.js' );
+var isPrimitive = require( './primitive.js' );
+var isObject = require( './object.js' );
+
+
+// MAIN //
+
+setReadOnly( isNumber, 'isPrimitive', isPrimitive );
+setReadOnly( isNumber, 'isObject', isObject );
+
+
+// EXPORTS //
+
+module.exports = isNumber;
+
+},{"./main.js":154,"./object.js":155,"./primitive.js":156,"@stdlib/utils/define-nonenumerable-read-only-property":350}],154:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isPrimitive = require( './primitive.js' );
+var isObject = require( './object.js' );
+
+
+// MAIN //
+
+/**
+* Tests if a value is a number.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is a number
+*
+* @example
+* var bool = isNumber( 3.14 );
+* // returns true
+*
+* @example
+* var bool = isNumber( new Number( 3.14 ) );
+* // returns true
+*
+* @example
+* var bool = isNumber( NaN );
+* // returns true
+*
+* @example
+* var bool = isNumber( null );
+* // returns false
+*/
+function isNumber( value ) {
+	return ( isPrimitive( value ) || isObject( value ) );
+}
+
+
+// EXPORTS //
+
+module.exports = isNumber;
+
+},{"./object.js":155,"./primitive.js":156}],155:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var hasToStringTag = require( '@stdlib/assert/has-tostringtag-support' );
+var nativeClass = require( '@stdlib/utils/native-class' );
+var Number = require( '@stdlib/number/ctor' );
+var test = require( './try2serialize.js' );
+
+
+// VARIABLES //
+
+var FLG = hasToStringTag();
+
+
+// MAIN //
+
+/**
+* Tests if a value is a number object.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a value is a number object
+*
+* @example
+* var bool = isNumber( 3.14 );
+* // returns false
+*
+* @example
+* var bool = isNumber( new Number( 3.14 ) );
+* // returns true
+*/
+function isNumber( value ) {
+	if ( typeof value === 'object' ) {
+		if ( value instanceof Number ) {
+			return true;
+		}
+		if ( FLG ) {
+			return test( value );
+		}
+		return ( nativeClass( value ) === '[object Number]' );
+	}
+	return false;
+}
+
+
+// EXPORTS //
+
+module.exports = isNumber;
+
+},{"./try2serialize.js":158,"@stdlib/assert/has-tostringtag-support":87,"@stdlib/number/ctor":282,"@stdlib/utils/native-class":389}],156:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Tests if a value is a number primitive.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a value is a number primitive
+*
+* @example
+* var bool = isNumber( 3.14 );
+* // returns true
+*
+* @example
+* var bool = isNumber( NaN );
+* // returns true
+*
+* @example
+* var bool = isNumber( new Number( 3.14 ) );
+* // returns false
+*/
+function isNumber( value ) {
+	return ( typeof value === 'number' );
+}
+
+
+// EXPORTS //
+
+module.exports = isNumber;
+
+},{}],157:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var Number = require( '@stdlib/number/ctor' );
+
+
+// MAIN //
+
+// eslint-disable-next-line stdlib/no-redeclare
+var toString = Number.prototype.toString; // non-generic
+
+
+// EXPORTS //
+
+module.exports = toString;
+
+},{"@stdlib/number/ctor":282}],158:[function(require,module,exports){
+arguments[4][114][0].apply(exports,arguments)
+},{"./tostring.js":157}],159:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is object-like.
+*
+* @module @stdlib/assert/is-object-like
+*
+* @example
+* var isObjectLike = require( '@stdlib/assert/is-object-like' );
+*
+* var bool = isObjectLike( {} );
+* // returns true
+*
+* bool = isObjectLike( [] );
+* // returns true
+*
+* bool = isObjectLike( null );
+* // returns false
+*
+* @example
+* var isObjectLike = require( '@stdlib/assert/is-object-like' ).isObjectLikeArray;
+*
+* var bool = isObjectLike( [ {}, [] ] );
+* // returns true
+*
+* bool = isObjectLike( [ {}, '3.0' ] );
+* // returns false
+*/
+
+// MODULES //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var arrayfun = require( '@stdlib/assert/tools/array-function' );
+var isObjectLike = require( './main.js' );
+
+
+// MAIN //
+
+setReadOnly( isObjectLike, 'isObjectLikeArray', arrayfun( isObjectLike ) );
+
+
+// EXPORTS //
+
+module.exports = isObjectLike;
+
+},{"./main.js":160,"@stdlib/assert/tools/array-function":196,"@stdlib/utils/define-nonenumerable-read-only-property":350}],160:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Tests if a value is object-like.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether a value is object-like
+*
+* @example
+* var bool = isObjectLike( {} );
+* // returns true
+*
+* @example
+* var bool = isObjectLike( [] );
+* // returns true
+*
+* @example
+* var bool = isObjectLike( null );
+* // returns false
+*/
+function isObjectLike( value ) {
+	return (
+		value !== null &&
+		typeof value === 'object'
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isObjectLike;
+
+},{}],161:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is an object.
+*
+* @module @stdlib/assert/is-object
+*
+* @example
+* var isObject = require( '@stdlib/assert/is-object' );
+*
+* var bool = isObject( {} );
+* // returns true
+*
+* bool = isObject( true );
+* // returns false
+*/
+
+// MODULES //
+
+var isObject = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isObject;
+
+},{"./main.js":162}],162:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isArray = require( '@stdlib/assert/is-array' );
+
+
+// MAIN //
+
+/**
+* Tests if a value is an object; e.g., `{}`.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is an object
+*
+* @example
+* var bool = isObject( {} );
+* // returns true
+*
+* @example
+* var bool = isObject( null );
+* // returns false
+*/
+function isObject( value ) {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		!isArray( value )
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isObject;
+
+},{"@stdlib/assert/is-array":107}],163:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is a plain object.
+*
+* @module @stdlib/assert/is-plain-object
+*
+* @example
+* var isPlainObject = require( '@stdlib/assert/is-plain-object' );
+*
+* var bool = isPlainObject( {} );
+* // returns true
+*
+* bool = isPlainObject( null );
+* // returns false
+*/
+
+// MODULES //
+
+var isPlainObject = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isPlainObject;
+
+},{"./main.js":164}],164:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isObject = require( '@stdlib/assert/is-object' );
+var isFunction = require( '@stdlib/assert/is-function' );
+var getPrototypeOf = require( '@stdlib/utils/get-prototype-of' );
+var hasOwnProp = require( '@stdlib/assert/has-own-property' );
+var nativeClass = require( '@stdlib/utils/native-class' );
+
+
+// VARIABLES //
+
+var objectPrototype = Object.prototype;
+
+
+// FUNCTIONS //
+
+/**
+* Tests that an object only has own properties.
+*
+* @private
+* @param {Object} obj - value to test
+* @returns {boolean} boolean indicating if an object only has own properties
+*/
+function ownProps( obj ) {
+	var key;
+
+	// NOTE: possibility of perf boost if key enumeration order is known (see http://stackoverflow.com/questions/18531624/isplainobject-thing).
+	for ( key in obj ) {
+		if ( !hasOwnProp( obj, key ) ) {
+			return false;
+		}
+	}
+	return true;
+}
+
+
+// MAIN //
+
+/**
+* Tests if a value is a plain object.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is a plain object
+*
+* @example
+* var bool = isPlainObject( {} );
+* // returns true
+*
+* @example
+* var bool = isPlainObject( null );
+* // returns false
+*/
+function isPlainObject( value ) {
+	var proto;
+
+	// Screen for obvious non-objects...
+	if ( !isObject( value ) ) {
+		return false;
+	}
+	// Objects with no prototype (e.g., `Object.create( null )`) are plain...
+	proto = getPrototypeOf( value );
+	if ( !proto ) {
+		return true;
+	}
+	// Objects having a prototype are plain if and only if they are constructed with a global `Object` function and the prototype points to the prototype of a plain object...
+	return (
+		// Cannot have own `constructor` property:
+		!hasOwnProp( value, 'constructor' ) &&
+
+		// Prototype `constructor` property must be a function (see also https://bugs.jquery.com/ticket/9897 and http://stackoverflow.com/questions/18531624/isplainobject-thing):
+		hasOwnProp( proto, 'constructor' ) &&
+		isFunction( proto.constructor ) &&
+		nativeClass( proto.constructor ) === '[object Function]' &&
+
+		// Test for object-specific method:
+		hasOwnProp( proto, 'isPrototypeOf' ) &&
+		isFunction( proto.isPrototypeOf ) &&
+
+		(
+			// Test if the prototype matches the global `Object` prototype (same realm):
+			proto === objectPrototype ||
+
+			// Test that all properties are own properties (cross-realm; *most* likely a plain object):
+			ownProps( value )
+		)
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isPlainObject;
+
+},{"@stdlib/assert/has-own-property":81,"@stdlib/assert/is-function":129,"@stdlib/assert/is-object":161,"@stdlib/utils/get-prototype-of":361,"@stdlib/utils/native-class":389}],165:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is a positive integer.
+*
+* @module @stdlib/assert/is-positive-integer
+*
+* @example
+* var isPositiveInteger = require( '@stdlib/assert/is-positive-integer' );
+*
+* var bool = isPositiveInteger( 5.0 );
+* // returns true
+*
+* bool = isPositiveInteger( new Number( 5.0 ) );
+* // returns true
+*
+* bool = isPositiveInteger( -5.0 );
+* // returns false
+*
+* bool = isPositiveInteger( 3.14 );
+* // returns false
+*
+* bool = isPositiveInteger( null );
+* // returns false
+*
+* @example
+* var isPositiveInteger = require( '@stdlib/assert/is-positive-integer' ).isPrimitive;
+*
+* var bool = isPositiveInteger( 3.0 );
+* // returns true
+*
+* bool = isPositiveInteger( new Number( 3.0 ) );
+* // returns false
+*
+* @example
+* var isPositiveInteger = require( '@stdlib/assert/is-positive-integer' ).isObject;
+*
+* var bool = isPositiveInteger( 3.0 );
+* // returns false
+*
+* bool = isPositiveInteger( new Number( 3.0 ) );
+* // returns true
+*/
+
+// MODULES //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var isPositiveInteger = require( './main.js' );
+var isPrimitive = require( './primitive.js' );
+var isObject = require( './object.js' );
+
+
+// MAIN //
+
+setReadOnly( isPositiveInteger, 'isPrimitive', isPrimitive );
+setReadOnly( isPositiveInteger, 'isObject', isObject );
+
+
+// EXPORTS //
+
+module.exports = isPositiveInteger;
+
+},{"./main.js":166,"./object.js":167,"./primitive.js":168,"@stdlib/utils/define-nonenumerable-read-only-property":350}],166:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isPrimitive = require( './primitive.js' );
+var isObject = require( './object.js' );
+
+
+// MAIN //
+
+/**
+* Tests if a value is a positive integer.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is a positive integer
+*
+* @example
+* var bool = isPositiveInteger( 5.0 );
+* // returns true
+*
+* @example
+* var bool = isPositiveInteger( new Number( 5.0 ) );
+* // returns true
+*
+* @example
+* var bool = isPositiveInteger( 0.0 );
+* // returns false
+*
+* @example
+* var bool = isPositiveInteger( -5.0 );
+* // returns false
+*
+* @example
+* var bool = isPositiveInteger( 3.14 );
+* // returns false
+*
+* @example
+* var bool = isPositiveInteger( null );
+* // returns false
+*/
+function isPositiveInteger( value ) {
+	return ( isPrimitive( value ) || isObject( value ) );
+}
+
+
+// EXPORTS //
+
+module.exports = isPositiveInteger;
+
+},{"./object.js":167,"./primitive.js":168}],167:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isInteger = require( '@stdlib/assert/is-integer' ).isObject;
+
+
+// MAIN //
+
+/**
+* Tests if a value is a number object having a positive integer value.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a value is a number object having a positive integer value
+*
+* @example
+* var bool = isPositiveInteger( 3.0 );
+* // returns false
+*
+* @example
+* var bool = isPositiveInteger( new Number( 3.0 ) );
+* // returns true
+*/
+function isPositiveInteger( value ) {
+	return (
+		isInteger( value ) &&
+		value.valueOf() > 0.0
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isPositiveInteger;
+
+},{"@stdlib/assert/is-integer":137}],168:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isInteger = require( '@stdlib/assert/is-integer' ).isPrimitive;
+
+
+// MAIN //
+
+/**
+* Tests if a value is a number primitive having a positive integer value.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a value is a number primitive having a positive integer value
+*
+* @example
+* var bool = isPositiveInteger( 3.0 );
+* // returns true
+*
+* @example
+* var bool = isPositiveInteger( new Number( 3.0 ) );
+* // returns false
+*/
+function isPositiveInteger( value ) {
+	return (
+		isInteger( value ) &&
+		value > 0.0
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isPositiveInteger;
+
+},{"@stdlib/assert/is-integer":137}],169:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is a positive number.
+*
+* @module @stdlib/assert/is-positive-number
+*
+* @example
+* var isPositiveNumber = require( '@stdlib/assert/is-positive-number' );
+*
+* var bool = isPositiveNumber( 5.0 );
+* // returns true
+*
+* bool = isPositiveNumber( new Number( 5.0 ) );
+* // returns true
+*
+* bool = isPositiveNumber( 3.14 );
+* // returns true
+*
+* bool = isPositiveNumber( -5.0 );
+* // returns false
+*
+* bool = isPositiveNumber( null );
+* // returns false
+*
+* @example
+* var isPositiveNumber = require( '@stdlib/assert/is-positive-number' ).isPrimitive;
+*
+* var bool = isPositiveNumber( 3.0 );
+* // returns true
+*
+* bool = isPositiveNumber( new Number( 3.0 ) );
+* // returns false
+*
+* @example
+* var isPositiveNumber = require( '@stdlib/assert/is-positive-number' ).isObject;
+*
+* var bool = isPositiveNumber( 3.0 );
+* // returns false
+*
+* bool = isPositiveNumber( new Number( 3.0 ) );
+* // returns true
+*/
+
+// MODULES //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var isPositiveNumber = require( './main.js' );
+var isPrimitive = require( './primitive.js' );
+var isObject = require( './object.js' );
+
+
+// MAIN //
+
+setReadOnly( isPositiveNumber, 'isPrimitive', isPrimitive );
+setReadOnly( isPositiveNumber, 'isObject', isObject );
+
+
+// EXPORTS //
+
+module.exports = isPositiveNumber;
+
+},{"./main.js":170,"./object.js":171,"./primitive.js":172,"@stdlib/utils/define-nonenumerable-read-only-property":350}],170:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isPrimitive = require( './primitive.js' );
+var isObject = require( './object.js' );
+
+
+// MAIN //
+
+/**
+* Tests if a value is a positive number.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is a positive number
+*
+* @example
+* var bool = isPositiveNumber( 5.0 );
+* // returns true
+*
+* @example
+* var bool = isPositiveNumber( new Number( 5.0 ) );
+* // returns true
+*
+* @example
+* var bool = isPositiveNumber( 3.14 );
+* // returns true
+*
+* @example
+* var bool = isPositiveNumber( -5.0 );
+* // returns false
+*
+* @example
+* var bool = isPositiveNumber( null );
+* // returns false
+*/
+function isPositiveNumber( value ) {
+	return ( isPrimitive( value ) || isObject( value ) );
+}
+
+
+// EXPORTS //
+
+module.exports = isPositiveNumber;
+
+},{"./object.js":171,"./primitive.js":172}],171:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isNumber = require( '@stdlib/assert/is-number' ).isObject;
+
+
+// MAIN //
+
+/**
+* Tests if a value is a number object having a positive value.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a value is a number object having a positive value
+*
+* @example
+* var bool = isPositiveNumber( 3.0 );
+* // returns false
+*
+* @example
+* var bool = isPositiveNumber( new Number( 3.0 ) );
+* // returns true
+*/
+function isPositiveNumber( value ) {
+	return (
+		isNumber( value ) &&
+		value.valueOf() > 0.0
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isPositiveNumber;
+
+},{"@stdlib/assert/is-number":153}],172:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isNumber = require( '@stdlib/assert/is-number' ).isPrimitive;
+
+
+// MAIN //
+
+/**
+* Tests if a value is a number primitive having a positive value.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a value is a number primitive having a positive value
+*
+* @example
+* var bool = isPositiveNumber( 3.0 );
+* // returns true
+*
+* @example
+* var bool = isPositiveNumber( new Number( 3.0 ) );
+* // returns false
+*/
+function isPositiveNumber( value ) {
+	return (
+		isNumber( value ) &&
+		value > 0.0
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isPositiveNumber;
+
+},{"@stdlib/assert/is-number":153}],173:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is a probability.
+*
+* @module @stdlib/assert/is-probability
+*
+* @example
+* var isProbability = require( '@stdlib/assert/is-probability' );
+*
+* var bool = isProbability( 0.5 );
+* // returns true
+*
+* bool = isProbability( new Number( 0.5 ) );
+* // returns true
+*
+* bool = isProbability( 3.14 );
+* // returns false
+*
+* bool = isProbability( -5.0 );
+* // returns false
+*
+* bool = isProbability( null );
+* // returns false
+*
+* @example
+* var isProbability = require( '@stdlib/assert/is-probability' ).isPrimitive;
+*
+* var bool = isProbability( 0.3 );
+* // returns true
+*
+* bool = isProbability( new Number( 0.3 ) );
+* // returns false
+*
+* @example
+* var isProbability = require( '@stdlib/assert/is-probability' ).isObject;
+*
+* var bool = isProbability( 0.77 );
+* // returns false
+*
+* bool = isProbability( new Number( 0.77 ) );
+* // returns true
+*/
+
+// MODULES //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var isProbability = require( './main.js' );
+var isPrimitive = require( './primitive.js' );
+var isObject = require( './object.js' );
+
+
+// MAIN //
+
+setReadOnly( isProbability, 'isPrimitive', isPrimitive );
+setReadOnly( isProbability, 'isObject', isObject );
+
+
+// EXPORTS //
+
+module.exports = isProbability;
+
+},{"./main.js":174,"./object.js":175,"./primitive.js":176,"@stdlib/utils/define-nonenumerable-read-only-property":350}],174:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isPrimitive = require( './primitive.js' );
+var isObject = require( './object.js' );
+
+
+// MAIN //
+
+/**
+* Tests if a value is a probability.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is a probability
+*
+* @example
+* var bool = isProbability( 0.5 );
+* // returns true
+*
+* @example
+* var bool = isProbability( new Number( 0.5 ) );
+* // returns true
+*
+* @example
+* var bool = isProbability( 3.14 );
+* // returns false
+*
+* @example
+* var bool = isProbability( -5.0 );
+* // returns false
+*
+* @example
+* var bool = isProbability( null );
+* // returns false
+*/
+function isProbability( value ) {
+	return ( isPrimitive( value ) || isObject( value ) );
+}
+
+
+// EXPORTS //
+
+module.exports = isProbability;
+
+},{"./object.js":175,"./primitive.js":176}],175:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isNumber = require( '@stdlib/assert/is-number' ).isObject;
+
+
+// MAIN //
+
+/**
+* Tests if a value is a number object having a value which is a probability.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a value is a number object having a value which is a probability
+*
+* @example
+* var bool = isProbability( 0.5 );
+* // returns false
+*
+* @example
+* var bool = isProbability( new Number( 0.5 ) );
+* // returns true
+*/
+function isProbability( value ) {
+	return (
+		isNumber( value ) &&
+		value.valueOf() >= 0.0 &&
+		value.valueOf() <= 1.0
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isProbability;
+
+},{"@stdlib/assert/is-number":153}],176:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isNumber = require( '@stdlib/assert/is-number' ).isPrimitive;
+
+
+// MAIN //
+
+/**
+* Tests if a value is a number primitive having a value which is a probability.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a value is a number primitive having a value which is a probability
+*
+* @example
+* var bool = isProbability( 0.66 );
+* // returns true
+*
+* @example
+* var bool = isProbability( new Number( 0.66 ) );
+* // returns false
+*/
+function isProbability( value ) {
+	return (
+		isNumber( value ) &&
+		value >= 0.0 &&
+		value <= 1.0
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isProbability;
+
+},{"@stdlib/assert/is-number":153}],177:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is a string.
+*
+* @module @stdlib/assert/is-string
+*
+* @example
+* var isString = require( '@stdlib/assert/is-string' );
+*
+* var bool = isString( 'beep' );
+* // returns true
+*
+* bool = isString( new String( 'beep' ) );
+* // returns true
+*
+* bool = isString( 5 );
+* // returns false
+*
+* @example
+* var isString = require( '@stdlib/assert/is-string' ).isObject;
+*
+* var bool = isString( new String( 'beep' ) );
+* // returns true
+*
+* bool = isString( 'beep' );
+* // returns false
+*
+* @example
+* var isString = require( '@stdlib/assert/is-string' ).isPrimitive;
+*
+* var bool = isString( 'beep' );
+* // returns true
+*
+* bool = isString( new String( 'beep' ) );
+* // returns false
+*/
+
+// MODULES //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var isString = require( './main.js' );
+var isPrimitive = require( './primitive.js' );
+var isObject = require( './object.js' );
+
+
+// MAIN //
+
+setReadOnly( isString, 'isPrimitive', isPrimitive );
+setReadOnly( isString, 'isObject', isObject );
+
+
+// EXPORTS //
+
+module.exports = isString;
+
+},{"./main.js":178,"./object.js":179,"./primitive.js":180,"@stdlib/utils/define-nonenumerable-read-only-property":350}],178:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isPrimitive = require( './primitive.js' );
+var isObject = require( './object.js' );
+
+
+// MAIN //
+
+/**
+* Tests if a value is a string.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is a string
+*
+* @example
+* var bool = isString( new String( 'beep' ) );
+* // returns true
+*
+* @example
+* var bool = isString( 'beep' );
+* // returns true
+*/
+function isString( value ) {
+	return ( isPrimitive( value ) || isObject( value ) );
+}
+
+
+// EXPORTS //
+
+module.exports = isString;
+
+},{"./object.js":179,"./primitive.js":180}],179:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var hasToStringTag = require( '@stdlib/assert/has-tostringtag-support' );
+var nativeClass = require( '@stdlib/utils/native-class' );
+var test = require( './try2valueof.js' );
+
+
+// VARIABLES //
+
+var FLG = hasToStringTag();
+
+
+// MAIN //
+
+/**
+* Tests if a value is a string object.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a value is a string object
+*
+* @example
+* var bool = isString( new String( 'beep' ) );
+* // returns true
+*
+* @example
+* var bool = isString( 'beep' );
+* // returns false
+*/
+function isString( value ) {
+	if ( typeof value === 'object' ) {
+		if ( value instanceof String ) {
+			return true;
+		}
+		if ( FLG ) {
+			return test( value );
+		}
+		return ( nativeClass( value ) === '[object String]' );
+	}
+	return false;
+}
+
+
+// EXPORTS //
+
+module.exports = isString;
+
+},{"./try2valueof.js":181,"@stdlib/assert/has-tostringtag-support":87,"@stdlib/utils/native-class":389}],180:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Tests if a value is a string primitive.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a value is a string primitive
+*
+* @example
+* var bool = isString( 'beep' );
+* // returns true
+*
+* @example
+* var bool = isString( new String( 'beep' ) );
+* // returns false
+*/
+function isString( value ) {
+	return ( typeof value === 'string' );
+}
+
+
+// EXPORTS //
+
+module.exports = isString;
+
+},{}],181:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var valueOf = require( './valueof.js' ); // eslint-disable-line stdlib/no-redeclare
+
+
+// MAIN //
+
+/**
+* Attempts to extract a string value.
+*
+* @private
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a string can be extracted
+*/
+function test( value ) {
+	try {
+		valueOf.call( value );
+		return true;
+	} catch ( err ) { // eslint-disable-line no-unused-vars
+		return false;
+	}
+}
+
+
+// EXPORTS //
+
+module.exports = test;
+
+},{"./valueof.js":182}],182:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// eslint-disable-next-line stdlib/no-redeclare
+var valueOf = String.prototype.valueOf; // non-generic
+
+
+// EXPORTS //
+
+module.exports = valueOf;
+
+},{}],183:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var Int8Array = require( '@stdlib/array/int8' );
+var Uint8Array = require( '@stdlib/array/uint8' );
+var Uint8ClampedArray = require( '@stdlib/array/uint8c' );
+var Int16Array = require( '@stdlib/array/int16' );
+var Uint16Array = require( '@stdlib/array/uint16' );
+var Int32Array = require( '@stdlib/array/int32' );
+var Uint32Array = require( '@stdlib/array/uint32' );
+var Float32Array = require( '@stdlib/array/float32' );
+var Float64Array = require( '@stdlib/array/float64' );
+
+
+// MAIN //
+
+var CTORS = [
+	Float64Array,
+	Float32Array,
+	Int32Array,
+	Uint32Array,
+	Int16Array,
+	Uint16Array,
+	Int8Array,
+	Uint8Array,
+	Uint8ClampedArray
+];
+
+
+// EXPORTS //
+
+module.exports = CTORS;
+
+},{"@stdlib/array/float32":27,"@stdlib/array/float64":30,"@stdlib/array/int16":32,"@stdlib/array/int32":35,"@stdlib/array/int8":38,"@stdlib/array/uint16":45,"@stdlib/array/uint32":48,"@stdlib/array/uint8":51,"@stdlib/array/uint8c":54}],184:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is a typed array.
+*
+* @module @stdlib/assert/is-typed-array
+*
+* @example
+* var Int8Array = require( '@stdlib/array/int8' );
+* var isTypedArray = require( '@stdlib/assert/is-typed-array' );
+*
+* var bool = isTypedArray( new Int8Array( 10 ) );
+* // returns true
+*/
+
+// MODULES //
+
+var isTypedArray = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isTypedArray;
+
+},{"./main.js":185}],185:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var ctorName = require( '@stdlib/utils/constructor-name' );
+var fcnName = require( '@stdlib/utils/function-name' );
+var getPrototypeOf = require( '@stdlib/utils/get-prototype-of' );
+var hasFloat64ArraySupport = require( '@stdlib/assert/has-float64array-support' );
+var Float64Array = require( '@stdlib/array/float64' );
+var CTORS = require( './ctors.js' );
+var NAMES = require( './names.json' );
+
+
+// VARIABLES //
+
+// Abstract `TypedArray` class:
+var TypedArray = ( hasFloat64ArraySupport() ) ? getPrototypeOf( Float64Array ) : Dummy; // eslint-disable-line max-len
+
+// Ensure abstract typed array class has expected name:
+TypedArray = ( fcnName( TypedArray ) === 'TypedArray' ) ? TypedArray : Dummy;
+
+
+// FUNCTIONS //
+
+/**
+* Dummy constructor.
+*
+* @private
+*/
+function Dummy() {} // eslint-disable-line no-empty-function
+
+
+// MAIN //
+
+/**
+* Tests if a value is a typed array.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating if a value is a typed array
+*
+* @example
+* var Int8Array = require( '@stdlib/array/int8' );
+*
+* var bool = isTypedArray( new Int8Array( 10 ) );
+* // returns true
+*/
+function isTypedArray( value ) {
+	var v;
+	var i;
+
+	if ( typeof value !== 'object' || value === null ) {
+		return false;
+	}
+	// Check for the abstract class...
+	if ( value instanceof TypedArray ) {
+		return true;
+	}
+	// Check for typed array objects from the same realm (same Node.js `vm` or same `Window` object)...
+	for ( i = 0; i < CTORS.length; i++ ) {
+		if ( value instanceof CTORS[ i ] ) {
+			return true;
+		}
+	}
+	// Walk the prototype tree until we find an object having a desired class...
+	while ( value ) {
+		v = ctorName( value );
+		for ( i = 0; i < NAMES.length; i++ ) {
+			if ( NAMES[ i ] === v ) {
+				return true;
+			}
+		}
+		value = getPrototypeOf( value );
+	}
+
+	return false;
+}
+
+
+// EXPORTS //
+
+module.exports = isTypedArray;
+
+},{"./ctors.js":183,"./names.json":186,"@stdlib/array/float64":30,"@stdlib/assert/has-float64array-support":64,"@stdlib/utils/constructor-name":342,"@stdlib/utils/function-name":358,"@stdlib/utils/get-prototype-of":361}],186:[function(require,module,exports){
+module.exports=[
+	"Int8Array",
+	"Uint8Array",
+	"Uint8ClampedArray",
+	"Int16Array",
+	"Uint16Array",
+	"Int32Array",
+	"Uint32Array",
+	"Float32Array",
+	"Float64Array"
+]
+
+},{}],187:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is a Uint16Array.
+*
+* @module @stdlib/assert/is-uint16array
+*
+* @example
+* var isUint16Array = require( '@stdlib/assert/is-uint16array' );
+*
+* var bool = isUint16Array( new Uint16Array( 10 ) );
+* // returns true
+*
+* bool = isUint16Array( [] );
+* // returns false
+*/
+
+// MODULES //
+
+var isUint16Array = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isUint16Array;
+
+},{"./main.js":188}],188:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var nativeClass = require( '@stdlib/utils/native-class' );
+
+
+// VARIABLES //
+
+var hasUint16Array = ( typeof Uint16Array === 'function' ); // eslint-disable-line stdlib/require-globals
+
+
+// MAIN //
+
+/**
+* Tests if a value is a Uint16Array.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is a Uint16Array
+*
+* @example
+* var bool = isUint16Array( new Uint16Array( 10 ) );
+* // returns true
+*
+* @example
+* var bool = isUint16Array( [] );
+* // returns false
+*/
+function isUint16Array( value ) {
+	return (
+		( hasUint16Array && value instanceof Uint16Array ) || // eslint-disable-line stdlib/require-globals
+		nativeClass( value ) === '[object Uint16Array]'
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isUint16Array;
+
+},{"@stdlib/utils/native-class":389}],189:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is a Uint32Array.
+*
+* @module @stdlib/assert/is-uint32array
+*
+* @example
+* var isUint32Array = require( '@stdlib/assert/is-uint32array' );
+*
+* var bool = isUint32Array( new Uint32Array( 10 ) );
+* // returns true
+*
+* bool = isUint32Array( [] );
+* // returns false
+*/
+
+// MODULES //
+
+var isUint32Array = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isUint32Array;
+
+},{"./main.js":190}],190:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var nativeClass = require( '@stdlib/utils/native-class' );
+
+
+// VARIABLES //
+
+var hasUint32Array = ( typeof Uint32Array === 'function' ); // eslint-disable-line stdlib/require-globals
+
+
+// MAIN //
+
+/**
+* Tests if a value is a Uint32Array.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is a Uint32Array
+*
+* @example
+* var bool = isUint32Array( new Uint32Array( 10 ) );
+* // returns true
+*
+* @example
+* var bool = isUint32Array( [] );
+* // returns false
+*/
+function isUint32Array( value ) {
+	return (
+		( hasUint32Array && value instanceof Uint32Array ) || // eslint-disable-line stdlib/require-globals
+		nativeClass( value ) === '[object Uint32Array]'
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isUint32Array;
+
+},{"@stdlib/utils/native-class":389}],191:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is a Uint8Array.
+*
+* @module @stdlib/assert/is-uint8array
+*
+* @example
+* var isUint8Array = require( '@stdlib/assert/is-uint8array' );
+*
+* var bool = isUint8Array( new Uint8Array( 10 ) );
+* // returns true
+*
+* bool = isUint8Array( [] );
+* // returns false
+*/
+
+// MODULES //
+
+var isUint8Array = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isUint8Array;
+
+},{"./main.js":192}],192:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var nativeClass = require( '@stdlib/utils/native-class' );
+
+
+// VARIABLES //
+
+var hasUint8Array = ( typeof Uint8Array === 'function' ); // eslint-disable-line stdlib/require-globals
+
+
+// MAIN //
+
+/**
+* Tests if a value is a Uint8Array.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is a Uint8Array
+*
+* @example
+* var bool = isUint8Array( new Uint8Array( 10 ) );
+* // returns true
+*
+* @example
+* var bool = isUint8Array( [] );
+* // returns false
+*/
+function isUint8Array( value ) {
+	return (
+		( hasUint8Array && value instanceof Uint8Array ) || // eslint-disable-line stdlib/require-globals
+		nativeClass( value ) === '[object Uint8Array]'
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isUint8Array;
+
+},{"@stdlib/utils/native-class":389}],193:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a value is a Uint8ClampedArray.
+*
+* @module @stdlib/assert/is-uint8clampedarray
+*
+* @example
+* var isUint8ClampedArray = require( '@stdlib/assert/is-uint8clampedarray' );
+*
+* var bool = isUint8ClampedArray( new Uint8ClampedArray( 10 ) );
+* // returns true
+*
+* bool = isUint8ClampedArray( [] );
+* // returns false
+*/
+
+// MODULES //
+
+var isUint8ClampedArray = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isUint8ClampedArray;
+
+},{"./main.js":194}],194:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var nativeClass = require( '@stdlib/utils/native-class' );
+
+
+// VARIABLES //
+
+var hasUint8ClampedArray = ( typeof Uint8ClampedArray === 'function' ); // eslint-disable-line stdlib/require-globals
+
+
+// MAIN //
+
+/**
+* Tests if a value is a Uint8ClampedArray.
+*
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether value is a Uint8ClampedArray
+*
+* @example
+* var bool = isUint8ClampedArray( new Uint8ClampedArray( 10 ) );
+* // returns true
+*
+* @example
+* var bool = isUint8ClampedArray( [] );
+* // returns false
+*/
+function isUint8ClampedArray( value ) {
+	return (
+		( hasUint8ClampedArray && value instanceof Uint8ClampedArray ) || // eslint-disable-line stdlib/require-globals
+		nativeClass( value ) === '[object Uint8ClampedArray]'
+	);
+}
+
+
+// EXPORTS //
+
+module.exports = isUint8ClampedArray;
+
+},{"@stdlib/utils/native-class":389}],195:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isArray = require( '@stdlib/assert/is-array' );
+
+
+// MAIN //
+
+/**
+* Returns a function which tests if every element in an array passes a test condition.
+*
+* @param {Function} predicate - function to apply
+* @throws {TypeError} must provide a function
+* @returns {Function} an array function
+*
+* @example
+* var isOdd = require( '@stdlib/assert/is-odd' );
+*
+* var arr1 = [ 1, 3, 5, 7 ];
+* var arr2 = [ 3, 5, 8 ];
+*
+* var validate = arrayfcn( isOdd );
+*
+* var bool = validate( arr1 );
+* // returns true
+*
+* bool = validate( arr2 );
+* // returns false
+*/
+function arrayfcn( predicate ) {
+	if ( typeof predicate !== 'function' ) {
+		throw new TypeError( 'invalid argument. Must provide a function. Value: `' + predicate + '`.' );
+	}
+	return every;
+
+	/**
+	* Tests if every element in an array passes a test condition.
+	*
+	* @private
+	* @param {*} value - value to test
+	* @returns {boolean} boolean indicating whether a value is an array for which all elements pass a test condition
+	*/
+	function every( value ) {
+		var len;
+		var i;
+		if ( !isArray( value ) ) {
+			return false;
+		}
+		len = value.length;
+		if ( len === 0 ) {
+			return false;
+		}
+		for ( i = 0; i < len; i++ ) {
+			if ( predicate( value[ i ] ) === false ) {
+				return false;
+			}
+		}
+		return true;
+	}
+}
+
+
+// EXPORTS //
+
+module.exports = arrayfcn;
+
+},{"@stdlib/assert/is-array":107}],196:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Return a function which tests if every element in an array passes a test condition.
+*
+* @module @stdlib/assert/tools/array-function
+*
+* @example
+* var isOdd = require( '@stdlib/assert/is-odd' );
+* var arrayfcn = require( '@stdlib/assert/tools/array-function' );
+*
+* var arr1 = [ 1, 3, 5, 7 ];
+* var arr2 = [ 3, 5, 8 ];
+*
+* var validate = arrayfcn( isOdd );
+*
+* var bool = validate( arr1 );
+* // returns true
+*
+* bool = validate( arr2 );
+* // returns false
+*/
+
+// MODULES //
+
+var arrayfcn = require( './arrayfcn.js' );
+
+
+// EXPORTS //
+
+module.exports = arrayfcn;
+
+},{"./arrayfcn.js":195}],197:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* BLAS level 1 routine to copy values from `x` into `y`.
+*
+* @module @stdlib/blas/base/gcopy
+*
+* @example
+* var gcopy = require( '@stdlib/blas/base/gcopy' );
+*
+* var x = [ 1.0, 2.0, 3.0, 4.0, 5.0 ];
+* var y = [ 6.0, 7.0, 8.0, 9.0, 10.0 ];
+*
+* gcopy( x.length, x, 1, y, 1 );
+* // y => [ 1.0, 2.0, 3.0, 4.0, 5.0 ]
+*
+* @example
+* var gcopy = require( '@stdlib/blas/base/gcopy' );
+*
+* var x = [ 1.0, 2.0, 3.0, 4.0, 5.0 ];
+* var y = [ 6.0, 7.0, 8.0, 9.0, 10.0 ];
+*
+* gcopy.ndarray( x.length, x, 1, 0, y, 1, 0 );
+* // y => [ 1.0, 2.0, 3.0, 4.0, 5.0 ]
+*/
+
+// MODULES //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var gcopy = require( './main.js' );
+var ndarray = require( './ndarray.js' );
+
+
+// MAIN //
+
+setReadOnly( gcopy, 'ndarray', ndarray );
+
+
+// EXPORTS //
+
+module.exports = gcopy;
+
+},{"./main.js":198,"./ndarray.js":199,"@stdlib/utils/define-nonenumerable-read-only-property":350}],198:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// VARIABLES //
+
+var M = 8;
+
+
+// MAIN //
+
+/**
+* Copies values from `x` into `y`.
+*
+* @param {PositiveInteger} N - number of values to copy
+* @param {NumericArray} x - input array
+* @param {integer} strideX - `x` stride length
+* @param {NumericArray} y - destination array
+* @param {integer} strideY - `y` stride length
+* @returns {NumericArray} `y`
+*
+* @example
+* var x = [ 1.0, 2.0, 3.0, 4.0, 5.0 ];
+* var y = [ 6.0, 7.0, 8.0, 9.0, 10.0 ];
+*
+* gcopy( x.length, x, 1, y, 1 );
+* // y => [ 1.0, 2.0, 3.0, 4.0, 5.0 ]
+*/
+function gcopy( N, x, strideX, y, strideY ) {
+	var ix;
+	var iy;
+	var m;
+	var i;
+	if ( N <= 0 ) {
+		return y;
+	}
+	// Use unrolled loops if both strides are equal to `1`...
+	if ( strideX === 1 && strideY === 1 ) {
+		m = N % M;
+
+		// If we have a remainder, run a clean-up loop...
+		if ( m > 0 ) {
+			for ( i = 0; i < m; i++ ) {
+				y[ i ] = x[ i ];
+			}
+		}
+		if ( N < M ) {
+			return y;
+		}
+		for ( i = m; i < N; i += M ) {
+			y[ i ] = x[ i ];
+			y[ i+1 ] = x[ i+1 ];
+			y[ i+2 ] = x[ i+2 ];
+			y[ i+3 ] = x[ i+3 ];
+			y[ i+4 ] = x[ i+4 ];
+			y[ i+5 ] = x[ i+5 ];
+			y[ i+6 ] = x[ i+6 ];
+			y[ i+7 ] = x[ i+7 ];
+		}
+		return y;
+	}
+	if ( strideX < 0 ) {
+		ix = (1-N) * strideX;
+	} else {
+		ix = 0;
+	}
+	if ( strideY < 0 ) {
+		iy = (1-N) * strideY;
+	} else {
+		iy = 0;
+	}
+	for ( i = 0; i < N; i++ ) {
+		y[ iy ] = x[ ix ];
+		ix += strideX;
+		iy += strideY;
+	}
+	return y;
+}
+
+
+// EXPORTS //
+
+module.exports = gcopy;
+
+},{}],199:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// VARIABLES //
+
+var M = 8;
+
+
+// MAIN //
+
+/**
+* Copies values from `x` into `y`.
+*
+* @param {PositiveInteger} N - number of values to copy
+* @param {NumericArray} x - input array
+* @param {integer} strideX - `x` stride length
+* @param {NonNegativeInteger} offsetX - starting `x` index
+* @param {NumericArray} y - destination array
+* @param {integer} strideY - `y` stride length
+* @param {NonNegativeInteger} offsetY - starting `y` index
+* @returns {NumericArray} `y`
+*
+* @example
+* var x = [ 1.0, 2.0, 3.0, 4.0, 5.0 ];
+* var y = [ 6.0, 7.0, 8.0, 9.0, 10.0 ];
+*
+* gcopy( x.length, x, 1, 0, y, 1, 0 );
+* // y => [ 1.0, 2.0, 3.0, 4.0, 5.0 ]
+*/
+function gcopy( N, x, strideX, offsetX, y, strideY, offsetY ) {
+	var ix;
+	var iy;
+	var m;
+	var i;
+	if ( N <= 0 ) {
+		return y;
+	}
+	ix = offsetX;
+	iy = offsetY;
+
+	// Use unrolled loops if both strides are equal to `1`...
+	if ( strideX === 1 && strideY === 1 ) {
+		m = N % M;
+
+		// If we have a remainder, run a clean-up loop...
+		if ( m > 0 ) {
+			for ( i = 0; i < m; i++ ) {
+				y[ iy ] = x[ ix ];
+				ix += strideX;
+				iy += strideY;
+			}
+		}
+		if ( N < M ) {
+			return y;
+		}
+		for ( i = m; i < N; i += M ) {
+			y[ iy ] = x[ ix ];
+			y[ iy+1 ] = x[ ix+1 ];
+			y[ iy+2 ] = x[ ix+2 ];
+			y[ iy+3 ] = x[ ix+3 ];
+			y[ iy+4 ] = x[ ix+4 ];
+			y[ iy+5 ] = x[ ix+5 ];
+			y[ iy+6 ] = x[ ix+6 ];
+			y[ iy+7 ] = x[ ix+7 ];
+			ix += M;
+			iy += M;
+		}
+		return y;
+	}
+	for ( i = 0; i < N; i++ ) {
+		y[ iy ] = x[ ix ];
+		ix += strideX;
+		iy += strideY;
+	}
+	return y;
+}
+
+
+// EXPORTS //
+
+module.exports = gcopy;
+
+},{}],200:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var ctor = require( 'buffer' ).Buffer; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = ctor;
+
+},{"buffer":415}],201:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Buffer constructor.
+*
+* @module @stdlib/buffer/ctor
+*
+* @example
+* var ctor = require( '@stdlib/buffer/ctor' );
+*
+* var b = new ctor( [ 1, 2, 3, 4 ] );
+* // returns <Buffer>
+*/
+
+// MODULES //
+
+var hasNodeBufferSupport = require( '@stdlib/assert/has-node-buffer-support' );
+var main = require( './buffer.js' );
+var polyfill = require( './polyfill.js' );
+
+
+// MAIN //
+
+var ctor;
+if ( hasNodeBufferSupport() ) {
+	ctor = main;
+} else {
+	ctor = polyfill;
+}
+
+
+// EXPORTS //
+
+module.exports = ctor;
+
+},{"./buffer.js":200,"./polyfill.js":202,"@stdlib/assert/has-node-buffer-support":79}],202:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// TODO: write (browser) polyfill
+
+// MAIN //
+
+/**
+* Buffer constructor.
+*
+* @throws {Error} not implemented
+*/
+function polyfill() {
+	throw new Error( 'not implemented' );
+}
+
+
+// EXPORTS //
+
+module.exports = polyfill;
+
+},{}],203:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isFunction = require( '@stdlib/assert/is-function' );
+var Buffer = require( '@stdlib/buffer/ctor' );
+
+
+// MAIN //
+
+var bool = isFunction( Buffer.from );
+
+
+// EXPORTS //
+
+module.exports = bool;
+
+},{"@stdlib/assert/is-function":129,"@stdlib/buffer/ctor":201}],204:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Copy buffer data to a new `Buffer` instance.
+*
+* @module @stdlib/buffer/from-buffer
+*
+* @example
+* var fromArray = require( '@stdlib/buffer/from-array' );
+* var copyBuffer = require( '@stdlib/buffer/from-buffer' );
+*
+* var b1 = fromArray( [ 1, 2, 3, 4 ] );
+* // returns <Buffer>
+*
+* var b2 = copyBuffer( b1 );
+* // returns <Buffer>
+*/
+
+// MODULES //
+
+var hasFrom = require( './has_from.js' );
+var main = require( './main.js' );
+var polyfill = require( './polyfill.js' );
+
+
+// MAIN //
+
+var copyBuffer;
+if ( hasFrom ) {
+	copyBuffer = main;
+} else {
+	copyBuffer = polyfill;
+}
+
+
+// EXPORTS //
+
+module.exports = copyBuffer;
+
+},{"./has_from.js":203,"./main.js":205,"./polyfill.js":206}],205:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isBuffer = require( '@stdlib/assert/is-buffer' );
+var Buffer = require( '@stdlib/buffer/ctor' );
+
+
+// MAIN //
+
+/**
+* Copies buffer data to a new `Buffer` instance.
+*
+* @param {Buffer} buffer - buffer from which to copy
+* @throws {TypeError} must provide a `Buffer` instance
+* @returns {Buffer} new `Buffer` instance
+*
+* @example
+* var fromArray = require( '@stdlib/buffer/from-array' );
+*
+* var b1 = fromArray( [ 1, 2, 3, 4 ] );
+* // returns <Buffer>
+*
+* var b2 = fromBuffer( b1 );
+* // returns <Buffer>
+*/
+function fromBuffer( buffer ) {
+	if ( !isBuffer( buffer ) ) {
+		throw new TypeError( 'invalid argument. Must provide a Buffer. Value: `' + buffer + '`' );
+	}
+	return Buffer.from( buffer );
+}
+
+
+// EXPORTS //
+
+module.exports = fromBuffer;
+
+},{"@stdlib/assert/is-buffer":115,"@stdlib/buffer/ctor":201}],206:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isBuffer = require( '@stdlib/assert/is-buffer' );
+var Buffer = require( '@stdlib/buffer/ctor' );
+
+
+// MAIN //
+
+/**
+* Copies buffer data to a new `Buffer` instance.
+*
+* @param {Buffer} buffer - buffer from which to copy
+* @throws {TypeError} must provide a `Buffer` instance
+* @returns {Buffer} new `Buffer` instance
+*
+* @example
+* var fromArray = require( '@stdlib/buffer/from-array' );
+*
+* var b1 = fromArray( [ 1, 2, 3, 4 ] );
+* // returns <Buffer>
+*
+* var b2 = fromBuffer( b1 );
+* // returns <Buffer>
+*/
+function fromBuffer( buffer ) {
+	if ( !isBuffer( buffer ) ) {
+		throw new TypeError( 'invalid argument. Must provide a Buffer. Value: `' + buffer + '`' );
+	}
+	return new Buffer( buffer ); // eslint-disable-line no-buffer-constructor
+}
+
+
+// EXPORTS //
+
+module.exports = fromBuffer;
+
+},{"@stdlib/assert/is-buffer":115,"@stdlib/buffer/ctor":201}],207:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Maximum length of a typed array.
+*
+* @module @stdlib/constants/array/max-typed-array-length
+*
+* @example
+* var MAX_TYPED_ARRAY_LENGTH = require( '@stdlib/constants/array/max-typed-array-length' );
+* // returns 9007199254740991
+*/
+
+// MAIN //
+
+/**
+* Maximum length of a typed array.
+*
+* ```tex
+* 2^{53} - 1
+* ```
+*
+* @constant
+* @type {number}
+* @default 9007199254740991
+*/
+var MAX_TYPED_ARRAY_LENGTH = 9007199254740991;
+
+
+// EXPORTS //
+
+module.exports = MAX_TYPED_ARRAY_LENGTH;
+
+},{}],208:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* The bias of a double-precision floating-point number's exponent.
+*
+* @module @stdlib/constants/math/float64-exponent-bias
+* @type {integer32}
+*
+* @example
+* var FLOAT64_EXPONENT_BIAS = require( '@stdlib/constants/math/float64-exponent-bias' );
+* // returns 1023
+*/
+
+
+// MAIN //
+
+/**
+* Bias of a double-precision floating-point number's exponent.
+*
+* ## Notes
+*
+* The bias can be computed via
+*
+* ```tex
+* \mathrm{bias} = 2^{k-1} - 1
+* ```
+*
+* where \\(k\\) is the number of bits in the exponent; here, \\(k = 11\\).
+*
+* @constant
+* @type {integer32}
+* @default 1023
+* @see [IEEE 754]{@link https://en.wikipedia.org/wiki/IEEE_754-1985}
+*/
+var FLOAT64_EXPONENT_BIAS = 1023|0; // asm type annotation
+
+
+// EXPORTS //
+
+module.exports = FLOAT64_EXPONENT_BIAS;
+
+},{}],209:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* High word mask for the exponent of a double-precision floating-point number.
+*
+* @module @stdlib/constants/math/float64-high-word-exponent-mask
+* @type {uinteger32}
+*
+* @example
+* var FLOAT64_HIGH_WORD_EXPONENT_MASK = require( '@stdlib/constants/math/float64-high-word-exponent-mask' );
+* // returns 2146435072
+*/
+
+
+// MAIN //
+
+/**
+* High word mask for the exponent of a double-precision floating-point number.
+*
+* ## Notes
+*
+* The high word mask for the exponent of a double-precision floating-point number is an unsigned 32-bit integer with the value \\( 2146435072 \\), which corresponds to the bit sequence
+*
+* ```binarystring
+* 0 11111111111 00000000000000000000
+* ```
+*
+* @constant
+* @type {uinteger32}
+* @default 0x7ff00000
+* @see [IEEE 754]{@link https://en.wikipedia.org/wiki/IEEE_754-1985}
+*/
+var FLOAT64_HIGH_WORD_EXPONENT_MASK = 0x7ff00000;
+
+
+// EXPORTS //
+
+module.exports = FLOAT64_HIGH_WORD_EXPONENT_MASK;
+
+},{}],210:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Natural logarithm of `2`.
+*
+* @module @stdlib/constants/math/float64-ln-two
+* @type {number}
+*
+* @example
+* var LN2 = require( '@stdlib/constants/math/float64-ln-two' );
+* // returns 0.6931471805599453
+*/
+
+
+// MAIN //
+
+/**
+* Natural logarithm of `2`.
+*
+* ```tex
+* \ln 2
+* ```
+*
+* @constant
+* @type {number}
+* @default 0.6931471805599453
+*/
+var LN2 = 6.93147180559945309417232121458176568075500134360255254120680009493393621969694715605863326996418687542001481021e-01; // eslint-disable-line max-len
+
+
+// EXPORTS //
+
+module.exports = LN2;
+
+},{}],211:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* The maximum biased base 2 exponent for a subnormal double-precision floating-point number.
+*
+* @module @stdlib/constants/math/float64-max-base2-exponent-subnormal
+* @type {integer32}
+*
+* @example
+* var FLOAT64_MAX_BASE2_EXPONENT_SUBNORMAL = require( '@stdlib/constants/math/float64-max-base2-exponent-subnormal' );
+* // returns -1023
+*/
+
+
+// MAIN //
+
+/**
+* The maximum biased base 2 exponent for a subnormal double-precision floating-point number.
+*
+* ```text
+* 00000000000 => 0 - BIAS = -1023
+* ```
+*
+* where `BIAS = 1023`.
+*
+* @constant
+* @type {integer32}
+* @default -1023
+* @see [IEEE 754]{@link https://en.wikipedia.org/wiki/IEEE_754-1985}
+*/
+var FLOAT64_MAX_BASE2_EXPONENT_SUBNORMAL = -1023|0; // asm type annotation
+
+
+// EXPORTS //
+
+module.exports = FLOAT64_MAX_BASE2_EXPONENT_SUBNORMAL;
+
+},{}],212:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* The maximum biased base 2 exponent for a double-precision floating-point number.
+*
+* @module @stdlib/constants/math/float64-max-base2-exponent
+* @type {integer32}
+*
+* @example
+* var FLOAT64_MAX_BASE2_EXPONENT = require( '@stdlib/constants/math/float64-max-base2-exponent' );
+* // returns 1023
+*/
+
+
+// MAIN //
+
+/**
+* The maximum biased base 2 exponent for a double-precision floating-point number.
+*
+* ```text
+* 11111111110 => 2046 - BIAS = 1023
+* ```
+*
+* where `BIAS = 1023`.
+*
+* @constant
+* @type {integer32}
+* @default 1023
+* @see [IEEE 754]{@link https://en.wikipedia.org/wiki/IEEE_754-1985}
+*/
+var FLOAT64_MAX_BASE2_EXPONENT = 1023|0; // asm type annotation
+
+
+// EXPORTS //
+
+module.exports = FLOAT64_MAX_BASE2_EXPONENT;
+
+},{}],213:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Maximum safe double-precision floating-point integer.
+*
+* @module @stdlib/constants/math/float64-max-safe-integer
+* @type {number}
+*
+* @example
+* var FLOAT64_MAX_SAFE_INTEGER = require( '@stdlib/constants/math/float64-max-safe-integer' );
+* // returns 9007199254740991
+*/
+
+
+// MAIN //
+
+/**
+* Maximum safe double-precision floating-point integer.
+*
+* ## Notes
+*
+* The integer has the value
+*
+* ```tex
+* 2^{53} - 1
+* ```
+*
+* @constant
+* @type {number}
+* @default 9007199254740991
+* @see [Safe Integers]{@link http://www.2ality.com/2013/10/safe-integers.html}
+* @see [IEEE 754]{@link https://en.wikipedia.org/wiki/IEEE_754-1985}
+*/
+var FLOAT64_MAX_SAFE_INTEGER = 9007199254740991;
+
+
+// EXPORTS //
+
+module.exports = FLOAT64_MAX_SAFE_INTEGER;
+
+},{}],214:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* The minimum biased base 2 exponent for a subnormal double-precision floating-point number.
+*
+* @module @stdlib/constants/math/float64-min-base2-exponent-subnormal
+* @type {integer32}
+*
+* @example
+* var FLOAT64_MIN_BASE2_EXPONENT_SUBNORMAL = require( '@stdlib/constants/math/float64-min-base2-exponent-subnormal' );
+* // returns -1074
+*/
+
+
+// MAIN //
+
+/**
+* The minimum biased base 2 exponent for a subnormal double-precision floating-point number.
+*
+* ```text
+* -(BIAS+(52-1)) = -(1023+51) = -1074
+* ```
+*
+* where `BIAS = 1023` and `52` is the number of digits in the significand.
+*
+* @constant
+* @type {integer32}
+* @default -1074
+* @see [IEEE 754]{@link https://en.wikipedia.org/wiki/IEEE_754-1985}
+*/
+var FLOAT64_MIN_BASE2_EXPONENT_SUBNORMAL = -1074|0; // asm type annotation
+
+
+// EXPORTS //
+
+module.exports = FLOAT64_MIN_BASE2_EXPONENT_SUBNORMAL;
+
+},{}],215:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Double-precision floating-point negative infinity.
+*
+* @module @stdlib/constants/math/float64-ninf
+* @type {number}
+*
+* @example
+* var FLOAT64_NINF = require( '@stdlib/constants/math/float64-ninf' );
+* // returns -Infinity
+*/
+
+// MODULES //
+
+var Number = require( '@stdlib/number/ctor' );
+
+
+// MAIN //
+
+/**
+* Double-precision floating-point negative infinity.
+*
+* ## Notes
+*
+* Double-precision floating-point negative infinity has the bit sequence
+*
+* ```binarystring
+* 1 11111111111 00000000000000000000 00000000000000000000000000000000
+* ```
+*
+* @constant
+* @type {number}
+* @default Number.NEGATIVE_INFINITY
+* @see [IEEE 754]{@link https://en.wikipedia.org/wiki/IEEE_754-1985}
+*/
+var FLOAT64_NINF = Number.NEGATIVE_INFINITY;
+
+
+// EXPORTS //
+
+module.exports = FLOAT64_NINF;
+
+},{"@stdlib/number/ctor":282}],216:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Double-precision floating-point positive infinity.
+*
+* @module @stdlib/constants/math/float64-pinf
+* @type {number}
+*
+* @example
+* var FLOAT64_PINF = require( '@stdlib/constants/math/float64-pinf' );
+* // returns Infinity
+*/
+
+
+// MAIN //
+
+/**
+* Double-precision floating-point positive infinity.
+*
+* ## Notes
+*
+* Double-precision floating-point positive infinity has the bit sequence
+*
+* ```binarystring
+* 0 11111111111 00000000000000000000 00000000000000000000000000000000
+* ```
+*
+* @constant
+* @type {number}
+* @default Number.POSITIVE_INFINITY
+* @see [IEEE 754]{@link https://en.wikipedia.org/wiki/IEEE_754-1985}
+*/
+var FLOAT64_PINF = Number.POSITIVE_INFINITY; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = FLOAT64_PINF;
+
+},{}],217:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Smallest positive double-precision floating-point normal number.
+*
+* @module @stdlib/constants/math/float64-smallest-normal
+* @type {number}
+*
+* @example
+* var FLOAT64_SMALLEST_NORMAL = require( '@stdlib/constants/math/float64-smallest-normal' );
+* // returns 2.2250738585072014e-308
+*/
+
+
+// MAIN //
+
+/**
+* The smallest positive double-precision floating-point normal number.
+*
+* ## Notes
+*
+* The number has the value
+*
+* ```tex
+* \frac{1}{2^{1023-1}}
+* ```
+*
+* which corresponds to the bit sequence
+*
+* ```binarystring
+* 0 00000000001 00000000000000000000 00000000000000000000000000000000
+* ```
+*
+* @constant
+* @type {number}
+* @default 2.2250738585072014e-308
+* @see [IEEE 754]{@link https://en.wikipedia.org/wiki/IEEE_754-1985}
+*/
+var FLOAT64_SMALLEST_NORMAL = 2.2250738585072014e-308;
+
+
+// EXPORTS //
+
+module.exports = FLOAT64_SMALLEST_NORMAL;
+
+},{}],218:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Maximum signed 16-bit integer.
+*
+* @module @stdlib/constants/math/int16-max
+* @type {integer32}
+*
+* @example
+* var INT16_MAX = require( '@stdlib/constants/math/int16-max' );
+* // returns 32767
+*/
+
+
+// MAIN //
+
+/**
+* Maximum signed 16-bit integer.
+*
+* ## Notes
+*
+* The number has the value
+*
+* ```tex
+* 2^{15} - 1
+* ```
+*
+* which corresponds to the bit sequence
+*
+* ```binarystring
+* 0111111111111111
+* ```
+*
+* @constant
+* @type {integer32}
+* @default 32767
+*/
+var INT16_MAX = 32767|0; // asm type annotation
+
+
+// EXPORTS //
+
+module.exports = INT16_MAX;
+
+},{}],219:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Minimum signed 16-bit integer.
+*
+* @module @stdlib/constants/math/int16-min
+* @type {integer32}
+*
+* @example
+* var INT16_MIN = require( '@stdlib/constants/math/int16-min' );
+* // returns -32768
+*/
+
+
+// MAIN //
+
+/**
+* Minimum signed 16-bit integer.
+*
+* ## Notes
+*
+* The number has the value
+*
+* ```tex
+* -(2^{15})
+* ```
+*
+* which corresponds to the two's complement bit sequence
+*
+* ```binarystring
+* 1000000000000000
+* ```
+*
+* @constant
+* @type {integer32}
+* @default -32768
+*/
+var INT16_MIN = -32768|0; // asm type annotation
+
+
+// EXPORTS //
+
+module.exports = INT16_MIN;
+
+},{}],220:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Maximum signed 32-bit integer.
+*
+* @module @stdlib/constants/math/int32-max
+* @type {integer32}
+*
+* @example
+* var INT32_MAX = require( '@stdlib/constants/math/int32-max' );
+* // returns 2147483647
+*/
+
+
+// MAIN //
+
+/**
+* Maximum signed 32-bit integer.
+*
+* ## Notes
+*
+* The number has the value
+*
+* ```tex
+* 2^{31} - 1
+* ```
+*
+* which corresponds to the bit sequence
+*
+* ```binarystring
+* 01111111111111111111111111111111
+* ```
+*
+* @constant
+* @type {integer32}
+* @default 2147483647
+*/
+var INT32_MAX = 2147483647|0; // asm type annotation
+
+
+// EXPORTS //
+
+module.exports = INT32_MAX;
+
+},{}],221:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Minimum signed 32-bit integer.
+*
+* @module @stdlib/constants/math/int32-min
+* @type {integer32}
+*
+* @example
+* var INT32_MIN = require( '@stdlib/constants/math/int32-min' );
+* // returns -2147483648
+*/
+
+
+// MAIN //
+
+/**
+* Minimum signed 32-bit integer.
+*
+* ## Notes
+*
+* The number has the value
+*
+* ```tex
+* -(2^{31})
+* ```
+*
+* which corresponds to the two's complement bit sequence
+*
+* ```binarystring
+* 10000000000000000000000000000000
+* ```
+*
+* @constant
+* @type {integer32}
+* @default -2147483648
+*/
+var INT32_MIN = -2147483648|0; // asm type annotation
+
+
+// EXPORTS //
+
+module.exports = INT32_MIN;
+
+},{}],222:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Maximum signed 8-bit integer.
+*
+* @module @stdlib/constants/math/int8-max
+* @type {integer32}
+*
+* @example
+* var INT8_MAX = require( '@stdlib/constants/math/int8-max' );
+* // returns 127
+*/
+
+
+// MAIN //
+
+/**
+* Maximum signed 8-bit integer.
+*
+* ## Notes
+*
+* The number is given by
+*
+* ```tex
+* 2^{7} - 1
+* ```
+*
+* which corresponds to the bit sequence
+*
+* ```binarystring
+* 01111111
+* ```
+*
+* @constant
+* @type {integer32}
+* @default 127
+*/
+var INT8_MAX = 127|0; // asm type annotation
+
+
+// EXPORTS //
+
+module.exports = INT8_MAX;
+
+},{}],223:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Minimum signed 8-bit integer.
+*
+* @module @stdlib/constants/math/int8-min
+* @type {integer32}
+*
+* @example
+* var INT8_MIN = require( '@stdlib/constants/math/int8-min' );
+* // returns -128
+*/
+
+
+// MAIN //
+
+/**
+* Minimum signed 8-bit integer.
+*
+* ## Notes
+*
+* The number is given by
+*
+* ```tex
+* -(2^{7})
+* ```
+*
+* which corresponds to the two's complement bit sequence
+*
+* ```binarystring
+* 10000000
+* ```
+*
+* @constant
+* @type {integer32}
+* @default -128
+*/
+var INT8_MIN = -128|0; // asm type annotation
+
+
+// EXPORTS //
+
+module.exports = INT8_MIN;
+
+},{}],224:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Maximum unsigned 16-bit integer.
+*
+* @module @stdlib/constants/math/uint16-max
+* @type {integer32}
+*
+* @example
+* var UINT16_MAX = require( '@stdlib/constants/math/uint16-max' );
+* // returns 65535
+*/
+
+
+// MAIN //
+
+/**
+* Maximum unsigned 16-bit integer.
+*
+* ## Notes
+*
+* The number has the value
+*
+* ```tex
+* 2^{16} - 1
+* ```
+*
+* which corresponds to the bit sequence
+*
+* ```binarystring
+* 1111111111111111
+* ```
+*
+* @constant
+* @type {integer32}
+* @default 65535
+*/
+var UINT16_MAX = 65535|0; // asm type annotation
+
+
+// EXPORTS //
+
+module.exports = UINT16_MAX;
+
+},{}],225:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Maximum unsigned 32-bit integer.
+*
+* @module @stdlib/constants/math/uint32-max
+* @type {uinteger32}
+*
+* @example
+* var UINT32_MAX = require( '@stdlib/constants/math/uint32-max' );
+* // returns 4294967295
+*/
+
+
+// MAIN //
+
+/**
+* Maximum unsigned 32-bit integer.
+*
+* ## Notes
+*
+* The number has the value
+*
+* ```tex
+* 2^{32} - 1
+* ```
+*
+* which corresponds to the bit sequence
+*
+* ```binarystring
+* 11111111111111111111111111111111
+* ```
+*
+* @constant
+* @type {uinteger32}
+* @default 4294967295
+*/
+var UINT32_MAX = 4294967295;
+
+
+// EXPORTS //
+
+module.exports = UINT32_MAX;
+
+},{}],226:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Maximum unsigned 8-bit integer.
+*
+* @module @stdlib/constants/math/uint8-max
+* @type {integer32}
+*
+* @example
+* var UINT8_MAX = require( '@stdlib/constants/math/uint8-max' );
+* // returns 255
+*/
+
+
+// MAIN //
+
+/**
+* Maximum unsigned 8-bit integer.
+*
+* ## Notes
+*
+* The number has the value
+*
+* ```tex
+* 2^{8} - 1
+* ```
+*
+* which corresponds to the bit sequence
+*
+* ```binarystring
+* 11111111
+* ```
+*
+* @constant
+* @type {integer32}
+* @default 255
+*/
+var UINT8_MAX = 255|0; // asm type annotation
+
+
+// EXPORTS //
+
+module.exports = UINT8_MAX;
+
+},{}],227:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a finite numeric value is an even number.
+*
+* @module @stdlib/math/base/assert/is-even
+*
+* @example
+* var isEven = require( '@stdlib/math/base/assert/is-even' );
+*
+* var bool = isEven( 5.0 );
+* // returns false
+*
+* bool = isEven( -2.0 );
+* // returns true
+*
+* bool = isEven( 0.0 );
+* // returns true
+*
+* bool = isEven( NaN );
+* // returns false
+*/
+
+// MODULES //
+
+var isEven = require( './is_even.js' );
+
+
+// EXPORTS //
+
+module.exports = isEven;
+
+},{"./is_even.js":228}],228:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isInteger = require( '@stdlib/math/base/assert/is-integer' );
+
+
+// MAIN //
+
+/**
+* Tests if a finite numeric value is an even number.
+*
+* @param {number} x - value to test
+* @returns {boolean} boolean indicating whether the value is an even number
+*
+* @example
+* var bool = isEven( 5.0 );
+* // returns false
+*
+* @example
+* var bool = isEven( -2.0 );
+* // returns true
+*
+* @example
+* var bool = isEven( 0.0 );
+* // returns true
+*
+* @example
+* var bool = isEven( NaN );
+* // returns false
+*/
+function isEven( x ) {
+	return isInteger( x/2.0 );
+}
+
+
+// EXPORTS //
+
+module.exports = isEven;
+
+},{"@stdlib/math/base/assert/is-integer":231}],229:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a double-precision floating-point numeric value is infinite.
+*
+* @module @stdlib/math/base/assert/is-infinite
+*
+* @example
+* var isInfinite = require( '@stdlib/math/base/assert/is-infinite' );
+*
+* var bool = isInfinite( Infinity );
+* // returns true
+*
+* bool = isInfinite( -Infinity );
+* // returns true
+*
+* bool = isInfinite( 5.0 );
+* // returns false
+*
+* bool = isInfinite( NaN );
+* // returns false
+*/
+
+// MODULES //
+
+var isInfinite = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isInfinite;
+
+},{"./main.js":230}],230:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var PINF = require( '@stdlib/constants/math/float64-pinf' );
+var NINF = require( '@stdlib/constants/math/float64-ninf' );
+
+
+// MAIN //
+
+/**
+* Tests if a double-precision floating-point numeric value is infinite.
+*
+* @param {number} x - value to test
+* @returns {boolean} boolean indicating whether the value is infinite
+*
+* @example
+* var bool = isInfinite( Infinity );
+* // returns true
+*
+* @example
+* var bool = isInfinite( -Infinity );
+* // returns true
+*
+* @example
+* var bool = isInfinite( 5.0 );
+* // returns false
+*
+* @example
+* var bool = isInfinite( NaN );
+* // returns false
+*/
+function isInfinite( x ) {
+	return (x === PINF || x === NINF);
+}
+
+
+// EXPORTS //
+
+module.exports = isInfinite;
+
+},{"@stdlib/constants/math/float64-ninf":215,"@stdlib/constants/math/float64-pinf":216}],231:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a finite double-precision floating-point number is an integer.
+*
+* @module @stdlib/math/base/assert/is-integer
+*
+* @example
+* var isInteger = require( '@stdlib/math/base/assert/is-integer' );
+*
+* var bool = isInteger( 1.0 );
+* // returns true
+*
+* bool = isInteger( 3.14 );
+* // returns false
+*/
+
+// MODULES //
+
+var isInteger = require( './is_integer.js' );
+
+
+// EXPORTS //
+
+module.exports = isInteger;
+
+},{"./is_integer.js":232}],232:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var floor = require( '@stdlib/math/base/special/floor' );
+
+
+// MAIN //
+
+/**
+* Tests if a finite double-precision floating-point number is an integer.
+*
+* @param {number} x - value to test
+* @returns {boolean} boolean indicating whether the value is an integer
+*
+* @example
+* var bool = isInteger( 1.0 );
+* // returns true
+*
+* @example
+* var bool = isInteger( 3.14 );
+* // returns false
+*/
+function isInteger( x ) {
+	return (floor(x) === x);
+}
+
+
+// EXPORTS //
+
+module.exports = isInteger;
+
+},{"@stdlib/math/base/special/floor":253}],233:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a double-precision floating-point numeric value is `NaN`.
+*
+* @module @stdlib/math/base/assert/is-nan
+*
+* @example
+* var isnan = require( '@stdlib/math/base/assert/is-nan' );
+*
+* var bool = isnan( NaN );
+* // returns true
+*
+* bool = isnan( 7.0 );
+* // returns false
+*/
+
+// MODULES //
+
+var isnan = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isnan;
+
+},{"./main.js":234}],234:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+/**
+* Tests if a double-precision floating-point numeric value is `NaN`.
+*
+* @param {number} x - value to test
+* @returns {boolean} boolean indicating whether the value is `NaN`
+*
+* @example
+* var bool = isnan( NaN );
+* // returns true
+*
+* @example
+* var bool = isnan( 7.0 );
+* // returns false
+*/
+function isnan( x ) {
+	return ( x !== x );
+}
+
+
+// EXPORTS //
+
+module.exports = isnan;
+
+},{}],235:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a finite numeric value is an odd number.
+*
+* @module @stdlib/math/base/assert/is-odd
+*
+* @example
+* var isOdd = require( '@stdlib/math/base/assert/is-odd' );
+*
+* var bool = isOdd( 5.0 );
+* // returns true
+*
+* bool = isOdd( -2.0 );
+* // returns false
+*
+* bool = isOdd( 0.0 );
+* // returns false
+*
+* bool = isOdd( NaN );
+* // returns false
+*/
+
+// MODULES //
+
+var isOdd = require( './is_odd.js' );
+
+
+// EXPORTS //
+
+module.exports = isOdd;
+
+},{"./is_odd.js":236}],236:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isEven = require( '@stdlib/math/base/assert/is-even' );
+
+
+// MAIN //
+
+/**
+* Tests if a finite numeric value is an odd number.
+*
+* @param {number} x - value to test
+* @returns {boolean} boolean indicating whether the value is an odd number
+*
+* @example
+* var bool = isOdd( 5.0 );
+* // returns true
+*
+* @example
+* var bool = isOdd( -2.0 );
+* // returns false
+*
+* @example
+* var bool = isOdd( 0.0 );
+* // returns false
+*
+* @example
+* var bool = isOdd( NaN );
+* // returns false
+*/
+function isOdd( x ) {
+	// Check sign to prevent overflow...
+	if ( x > 0.0 ) {
+		return isEven( x-1.0 );
+	}
+	return isEven( x+1.0 );
+}
+
+
+// EXPORTS //
+
+module.exports = isOdd;
+
+},{"@stdlib/math/base/assert/is-even":227}],237:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a finite double-precision floating-point number is a positive integer.
+*
+* @module @stdlib/math/base/assert/is-positive-integer
+*
+* @example
+* var isPositiveInteger = require( '@stdlib/math/base/assert/is-positive-integer' );
+*
+* var bool = isPositiveInteger( 1.0 );
+* // returns true
+*
+* bool = isPositiveInteger( 0.0 );
+* // returns false
+*
+* bool = isPositiveInteger( -10.0 );
+* // returns false
+*/
+
+// MODULES //
+
+var isPositiveInteger = require( './is_positive_integer.js' );
+
+
+// EXPORTS //
+
+module.exports = isPositiveInteger;
+
+},{"./is_positive_integer.js":238}],238:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var floor = require( '@stdlib/math/base/special/floor' );
+
+
+// MAIN //
+
+/**
+* Tests if a finite double-precision floating-point number is a positive integer.
+*
+* @param {number} x - value to test
+* @returns {boolean} boolean indicating whether the value is a positive integer
+*
+* @example
+* var bool = isPositiveInteger( 1.0 );
+* // returns true
+*
+* @example
+* var bool = isPositiveInteger( 0.0 );
+* // returns false
+*
+* @example
+* var bool = isPositiveInteger( -10.0 );
+* // returns false
+*/
+function isPositiveInteger( x ) {
+	return (floor(x) === x && x > 0);
+}
+
+
+// EXPORTS //
+
+module.exports = isPositiveInteger;
+
+},{"@stdlib/math/base/special/floor":253}],239:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a double-precision floating-point numeric value is positive zero.
+*
+* @module @stdlib/math/base/assert/is-positive-zero
+*
+* @example
+* var isPositiveZero = require( '@stdlib/math/base/assert/is-positive-zero' );
+*
+* var bool = isPositiveZero( 0.0 );
+* // returns true
+*
+* bool = isPositiveZero( -0.0 );
+* // returns false
+*/
+
+// MODULES //
+
+var isPositiveZero = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = isPositiveZero;
+
+},{"./main.js":240}],240:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var PINF = require( '@stdlib/constants/math/float64-pinf' );
+
+
+// MAIN //
+
+/**
+* Tests if a double-precision floating-point numeric value is positive zero.
+*
+* @param {number} x - value to test
+* @returns {boolean} boolean indicating whether the value is positive zero
+*
+* @example
+* var bool = isPositiveZero( 0.0 );
+* // returns true
+*
+* @example
+* var bool = isPositiveZero( -0.0 );
+* // returns false
+*/
+function isPositiveZero( x ) {
+	return (x === 0.0 && 1.0/x === PINF);
+}
+
+
+// EXPORTS //
+
+module.exports = isPositiveZero;
+
+},{"@stdlib/constants/math/float64-pinf":216}],241:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Test if a numeric value is a probability.
+*
+* @module @stdlib/math/base/assert/is-probability
+*
+* @example
+* var isProbability = require( '@stdlib/math/base/assert/is-probability' );
+*
+* var bool = isProbability( 0.5 );
+* // returns true
+*
+* bool = isProbability( 3.14 );
+* // returns false
+*
+* bool = isProbability( NaN );
+* // returns false
+*/
+
+// MODULES //
+
+var isProbability = require( './is_probability.js' );
+
+
+// EXPORTS //
+
+module.exports = isProbability;
+
+},{"./is_probability.js":242}],242:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Tests if a numeric value is a probability.
+*
+* @param {number} x - value to test
+* @returns {boolean} boolean indicating whether the value is a probability
+*
+* @example
+* var bool = isProbability( 0.5 );
+* // returns true
+*
+* @example
+* var bool = isProbability( 3.14 );
+* // returns false
+*
+* @example
+* var bool = isProbability( NaN );
+* // returns false
+*/
+function isProbability( x ) {
+	return ( x >= 0.0 && x <= 1.0 );
+}
+
+
+// EXPORTS //
+
+module.exports = isProbability;
+
+},{}],243:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Compute an absolute value of a double-precision floating-point number.
+*
+* @module @stdlib/math/base/special/abs
+*
+* @example
+* var abs = require( '@stdlib/math/base/special/abs' );
+*
+* var v = abs( -1.0 );
+* // returns 1.0
+*
+* v = abs( 2.0 );
+* // returns 2.0
+*
+* v = abs( 0.0 );
+* // returns 0.0
+*
+* v = abs( -0.0 );
+* // returns 0.0
+*
+* v = abs( NaN );
+* // returns NaN
+*/
+
+// MODULES //
+
+var abs = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = abs;
+
+},{"./main.js":244}],244:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2021 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+/**
+* Computes the absolute value of a double-precision floating-point number `x`.
+*
+* @param {number} x - input value
+* @returns {number} absolute value
+*
+* @example
+* var v = abs( -1.0 );
+* // returns 1.0
+*
+* @example
+* var v = abs( 2.0 );
+* // returns 2.0
+*
+* @example
+* var v = abs( 0.0 );
+* // returns 0.0
+*
+* @example
+* var v = abs( -0.0 );
+* // returns 0.0
+*
+* @example
+* var v = abs( NaN );
+* // returns NaN
+*/
+function abs( x ) {
+	return Math.abs( x ); // eslint-disable-line stdlib/no-builtin-math
+}
+
+
+// EXPORTS //
+
+module.exports = abs;
+
+},{}],245:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Round a double-precision floating-point number toward positive infinity.
+*
+* @module @stdlib/math/base/special/ceil
+*
+* @example
+* var ceil = require( '@stdlib/math/base/special/ceil' );
+*
+* var v = ceil( -4.2 );
+* // returns -4.0
+*
+* v = ceil( 9.99999 );
+* // returns 10.0
+*
+* v = ceil( 0.0 );
+* // returns 0.0
+*
+* v = ceil( NaN );
+* // returns NaN
+*/
+
+// MODULES //
+
+var ceil = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = ceil;
+
+},{"./main.js":246}],246:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// TODO: implementation (?)
+
+/**
+* Rounds a double-precision floating-point number toward positive infinity.
+*
+* @param {number} x - input value
+* @returns {number} rounded value
+*
+* @example
+* var v = ceil( -4.2 );
+* // returns -4.0
+*
+* @example
+* var v = ceil( 9.99999 );
+* // returns 10.0
+*
+* @example
+* var v = ceil( 0.0 );
+* // returns 0.0
+*
+* @example
+* var v = ceil( NaN );
+* // returns NaN
+*/
+var ceil = Math.ceil; // eslint-disable-line stdlib/no-builtin-math
+
+
+// EXPORTS //
+
+module.exports = ceil;
+
+},{}],247:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var toWords = require( '@stdlib/number/float64/base/to-words' );
+var getHighWord = require( '@stdlib/number/float64/base/get-high-word' );
+var fromWords = require( '@stdlib/number/float64/base/from-words' );
+
+
+// VARIABLES //
+
+// 10000000000000000000000000000000 => 2147483648 => 0x80000000
+var SIGN_MASK = 0x80000000>>>0; // asm type annotation
+
+// 01111111111111111111111111111111 => 2147483647 => 0x7fffffff
+var MAGNITUDE_MASK = 0x7fffffff|0; // asm type annotation
+
+// High/low words workspace:
+var WORDS = [ 0, 0 ]; // WARNING: not thread safe
+
+
+// MAIN //
+
+/**
+* Returns a double-precision floating-point number with the magnitude of `x` and the sign of `y`.
+*
+* @param {number} x - number from which to derive a magnitude
+* @param {number} y - number from which to derive a sign
+* @returns {number} a double-precision floating-point number
+*
+* @example
+* var z = copysign( -3.14, 10.0 );
+* // returns 3.14
+*
+* @example
+* var z = copysign( 3.14, -1.0 );
+* // returns -3.14
+*
+* @example
+* var z = copysign( 1.0, -0.0 );
+* // returns -1.0
+*
+* @example
+* var z = copysign( -3.14, -0.0 );
+* // returns -3.14
+*
+* @example
+* var z = copysign( -0.0, 1.0 );
+* // returns 0.0
+*/
+function copysign( x, y ) {
+	var hx;
+	var hy;
+
+	// Split `x` into higher and lower order words:
+	toWords( WORDS, x );
+	hx = WORDS[ 0 ];
+
+	// Turn off the sign bit of `x`:
+	hx &= MAGNITUDE_MASK;
+
+	// Extract the higher order word from `y`:
+	hy = getHighWord( y );
+
+	// Leave only the sign bit of `y` turned on:
+	hy &= SIGN_MASK;
+
+	// Copy the sign bit of `y` to `x`:
+	hx |= hy;
+
+	// Return a new value having the same magnitude as `x`, but with the sign of `y`:
+	return fromWords( hx, WORDS[ 1 ] );
+}
+
+
+// EXPORTS //
+
+module.exports = copysign;
+
+},{"@stdlib/number/float64/base/from-words":286,"@stdlib/number/float64/base/get-high-word":290,"@stdlib/number/float64/base/to-words":301}],248:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Return a double-precision floating-point number with the magnitude of `x` and the sign of `y`.
+*
+* @module @stdlib/math/base/special/copysign
+*
+* @example
+* var copysign = require( '@stdlib/math/base/special/copysign' );
+*
+* var z = copysign( -3.14, 10.0 );
+* // returns 3.14
+*
+* z = copysign( 3.14, -1.0 );
+* // returns -3.14
+*
+* z = copysign( 1.0, -0.0 );
+* // returns -1.0
+*
+* z = copysign( -3.14, -0.0 );
+* // returns -3.14
+*
+* z = copysign( -0.0, 1.0 );
+* // returns 0.0
+*/
+
+// MODULES //
+
+var copysign = require( './copysign.js' );
+
+
+// EXPORTS //
+
+module.exports = copysign;
+
+},{"./copysign.js":247}],249:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*
+*
+* ## Notice
+*
+* The following copyright, license, and long comment were part of the original implementation available as part of [FreeBSD]{@link https://svnweb.freebsd.org/base/release/9.3.0/lib/msun/src/e_exp.c}. The implementation follows the original, but has been modified for JavaScript.
+*
+* ```text
+* Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
+*
+* Developed at SunPro, a Sun Microsystems, Inc. business.
+* Permission to use, copy, modify, and distribute this
+* software is freely granted, provided that this notice
+* is preserved.
+* ```
+*/
+
+'use strict';
+
+// MODULES //
+
+var isnan = require( '@stdlib/math/base/assert/is-nan' );
+var trunc = require( '@stdlib/math/base/special/trunc' );
+var NINF = require( '@stdlib/constants/math/float64-ninf' );
+var PINF = require( '@stdlib/constants/math/float64-pinf' );
+var expmulti = require( './expmulti.js' );
+
+
+// VARIABLES //
+
+var LN2_HI = 6.93147180369123816490e-01;
+var LN2_LO = 1.90821492927058770002e-10;
+var LOG2_E = 1.44269504088896338700e+00;
+var OVERFLOW = 7.09782712893383973096e+02;
+var UNDERFLOW = -7.45133219101941108420e+02;
+var NEARZERO = 1.0 / (1 << 28); // 2^-28;
+var NEG_NEARZERO = -NEARZERO;
+
+
+// MAIN //
+
+/**
+* Evaluates the natural exponential function.
+*
+* ## Method
+*
+* 1.  We reduce \\( x \\) to an \\( r \\) so that \\( |r| \leq 0.5 \cdot \ln(2) \approx 0.34658 \\). Given \\( x \\), we find an \\( r \\) and integer \\( k \\) such that
+*
+*     ```tex
+*     \begin{align*}
+*     x &= k \cdot \ln(2) + r \\
+*     |r| &\leq 0.5 \cdot \ln(2)
+*     \end{align*}
+*     ```
+*
+*     <!-- <note> -->
+*
+*     \\( r \\) can be represented as \\( r = \mathrm{hi} - \mathrm{lo} \\) for better accuracy.
+*
+*     <!-- </note> -->
+*
+* 2.  We approximate of \\( e^{r} \\) by a special rational function on the interval \\(\[0,0.34658]\\):
+*
+*     ```tex
+*     \begin{align*}
+*     R\left(r^2\right) &= r \cdot \frac{ e^{r}+1 }{ e^{r}-1 } \\
+*     &= 2 + \frac{r^2}{6} - \frac{r^4}{360} + \ldots
+*     \end{align*}
+*     ```
+*
+*     We use a special Remes algorithm on \\(\[0,0.34658]\\) to generate a polynomial of degree \\(5\\) to approximate \\(R\\). The maximum error of this polynomial approximation is bounded by \\(2^{-59}\\). In other words,
+*
+*     ```tex
+*     R(z) \sim 2 + P_1 z + P_2 z^2 + P_3 z^3 + P_4 z^4 + P_5 z^5
+*     ```
+*
+*     where \\( z = r^2 \\) and
+*
+*     ```tex
+*     \left|  2 + P_1 z + \ldots + P_5 z^5  - R(z) \right| \leq 2^{-59}
+*     ```
+*
+*     <!-- <note> -->
+*
+*     The values of \\( P_1 \\) to \\( P_5 \\) are listed in the source code.
+*
+*     <!-- </note> -->
+*
+*     The computation of \\( e^{r} \\) thus becomes
+*
+*     ```tex
+*     \begin{align*}
+*     e^{r} &= 1 + \frac{2r}{R-r} \\
+*           &= 1 + r + \frac{r \cdot R_1(r)}{2 - R_1(r)}\ \text{for better accuracy}
+*     \end{align*}
+*     ```
+*
+*     where
+*
+*     ```tex
+*     R_1(r) = r - P_1\ r^2 + P_2\ r^4 + \ldots + P_5\ r^{10}
+*     ```
+*
+* 3.  We scale back to obtain \\( e^{x} \\). From step 1, we have
+*
+*     ```tex
+*     e^{x} = 2^k e^{r}
+*     ```
+*
+*
+* ## Special Cases
+*
+* ```tex
+* \begin{align*}
+* e^\infty &= \infty \\
+* e^{-\infty} &= 0 \\
+* e^{\mathrm{NaN}} &= \mathrm{NaN} \\
+* e^0 &= 1\ \mathrm{is\ exact\ for\ finite\ argument\ only}
+* \end{align*}
+* ```
+*
+* ## Notes
+*
+* -   According to an error analysis, the error is always less than \\(1\\) ulp (unit in the last place).
+*
+* -   For an IEEE double,
+*
+*     -   if \\(x > 7.09782712893383973096\mbox{e+}02\\), then \\(e^{x}\\) overflows
+*     -   if \\(x < -7.45133219101941108420\mbox{e+}02\\), then \\(e^{x}\\) underflows
+*
+* -   The hexadecimal values included in the source code are the intended ones for the used constants. Decimal values may be used, provided that the compiler will convert from decimal to binary accurately enough to produce the intended hexadecimal values.
+*
+*
+* @param {number} x - input value
+* @returns {number} function value
+*
+* @example
+* var v = exp( 4.0 );
+* // returns ~54.5982
+*
+* @example
+* var v = exp( -9.0 );
+* // returns ~1.234e-4
+*
+* @example
+* var v = exp( 0.0 );
+* // returns 1.0
+*
+* @example
+* var v = exp( NaN );
+* // returns NaN
+*/
+function exp( x ) {
+	var hi;
+	var lo;
+	var k;
+
+	if ( isnan( x ) || x === PINF ) {
+		return x;
+	}
+	if ( x === NINF ) {
+		return 0.0;
+	}
+	if ( x > OVERFLOW ) {
+		return PINF;
+	}
+	if ( x < UNDERFLOW ) {
+		return 0.0;
+	}
+	if (
+		x > NEG_NEARZERO &&
+		x < NEARZERO
+	) {
+		return 1.0 + x;
+	}
+	// Reduce and compute `r = hi - lo` for extra precision.
+	if ( x < 0.0 ) {
+		k = trunc( (LOG2_E*x) - 0.5 );
+	} else {
+		k = trunc( (LOG2_E*x) + 0.5 );
+	}
+	hi = x - (k*LN2_HI);
+	lo = k * LN2_LO;
+
+	return expmulti( hi, lo, k );
+}
+
+
+// EXPORTS //
+
+module.exports = exp;
+
+},{"./expmulti.js":250,"@stdlib/constants/math/float64-ninf":215,"@stdlib/constants/math/float64-pinf":216,"@stdlib/math/base/assert/is-nan":233,"@stdlib/math/base/special/trunc":278}],250:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*
+*
+* ## Notice
+*
+* The following copyright, license, and long comment were part of the original implementation available as part of [FreeBSD]{@link https://svnweb.freebsd.org/base/release/9.3.0/lib/msun/src/e_exp.c}. The implementation follows the original, but has been modified for JavaScript.
+*
+* ```text
+* Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
+*
+* Developed at SunPro, a Sun Microsystems, Inc. business.
+* Permission to use, copy, modify, and distribute this
+* software is freely granted, provided that this notice
+* is preserved.
+* ```
+*/
+
+'use strict';
+
+// MODULES //
+
+var ldexp = require( '@stdlib/math/base/special/ldexp' );
+var polyvalP = require( './polyval_p.js' );
+
+
+// MAIN //
+
+/**
+* Computes \\(e^{r} 2^k\\) where \\(r = \mathrm{hi} - \mathrm{lo}\\) and \\(|r| \leq \ln(2)/2\\).
+*
+* @private
+* @param {number} hi - upper bound
+* @param {number} lo - lower bound
+* @param {integer} k - power of 2
+* @returns {number} function value
+*/
+function expmulti( hi, lo, k ) {
+	var r;
+	var t;
+	var c;
+	var y;
+
+	r = hi - lo;
+	t = r * r;
+	c = r - ( t*polyvalP( t ) );
+	y = 1.0 - ( lo - ( (r*c)/(2.0-c) ) - hi);
+
+	return ldexp( y, k );
+}
+
+
+// EXPORTS //
+
+module.exports = expmulti;
+
+},{"./polyval_p.js":252,"@stdlib/math/base/special/ldexp":255}],251:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Evaluate the natural exponential function.
+*
+* @module @stdlib/math/base/special/exp
+*
+* @example
+* var exp = require( '@stdlib/math/base/special/exp' );
+*
+* var v = exp( 4.0 );
+* // returns ~54.5982
+*
+* v = exp( -9.0 );
+* // returns ~1.234e-4
+*
+* v = exp( 0.0 );
+* // returns 1.0
+*
+* v = exp( NaN );
+* // returns NaN
+*/
+
+// MODULES //
+
+var exp = require( './exp.js' );
+
+
+// EXPORTS //
+
+module.exports = exp;
+
+},{"./exp.js":249}],252:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+/* This is a generated file. Do not edit directly. */
+'use strict';
+
+// MAIN //
+
+/**
+* Evaluates a polynomial.
+*
+* ## Notes
+*
+* -   The implementation uses [Horner's rule][horners-method] for efficient computation.
+*
+* [horners-method]: https://en.wikipedia.org/wiki/Horner%27s_method
+*
+*
+* @private
+* @param {number} x - value at which to evaluate the polynomial
+* @returns {number} evaluated polynomial
+*/
+function evalpoly( x ) {
+	if ( x === 0.0 ) {
+		return 0.16666666666666602;
+	}
+	return 0.16666666666666602 + (x * (-0.0027777777777015593 + (x * (0.00006613756321437934 + (x * (-0.0000016533902205465252 + (x * 4.1381367970572385e-8))))))); // eslint-disable-line max-len
+}
+
+
+// EXPORTS //
+
+module.exports = evalpoly;
+
+},{}],253:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Round a double-precision floating-point number toward negative infinity.
+*
+* @module @stdlib/math/base/special/floor
+*
+* @example
+* var floor = require( '@stdlib/math/base/special/floor' );
+*
+* var v = floor( -4.2 );
+* // returns -5.0
+*
+* v = floor( 9.99999 );
+* // returns 9.0
+*
+* v = floor( 0.0 );
+* // returns 0.0
+*
+* v = floor( NaN );
+* // returns NaN
+*/
+
+// MODULES //
+
+var floor = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = floor;
+
+},{"./main.js":254}],254:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// TODO: implementation (?)
+
+/**
+* Rounds a double-precision floating-point number toward negative infinity.
+*
+* @param {number} x - input value
+* @returns {number} rounded value
+*
+* @example
+* var v = floor( -4.2 );
+* // returns -5.0
+*
+* @example
+* var v = floor( 9.99999 );
+* // returns 9.0
+*
+* @example
+* var v = floor( 0.0 );
+* // returns 0.0
+*
+* @example
+* var v = floor( NaN );
+* // returns NaN
+*/
+var floor = Math.floor; // eslint-disable-line stdlib/no-builtin-math
+
+
+// EXPORTS //
+
+module.exports = floor;
+
+},{}],255:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Multiply a double-precision floating-point number by an integer power of two.
+*
+* @module @stdlib/math/base/special/ldexp
+*
+* @example
+* var ldexp = require( '@stdlib/math/base/special/ldexp' );
+*
+* var x = ldexp( 0.5, 3 ); // => 0.5 * 2^3 = 0.5 * 8
+* // returns 4.0
+*
+* x = ldexp( 4.0, -2 ); // => 4 * 2^(-2) = 4 * (1/4)
+* // returns 1.0
+*
+* x = ldexp( 0.0, 20 );
+* // returns 0.0
+*
+* x = ldexp( -0.0, 39 );
+* // returns -0.0
+*
+* x = ldexp( NaN, -101 );
+* // returns NaN
+*
+* x = ldexp( Infinity, 11 );
+* // returns Infinity
+*
+* x = ldexp( -Infinity, -118 );
+* // returns -Infinity
+*/
+
+// MODULES //
+
+var ldexp = require( './ldexp.js' );
+
+
+// EXPORTS //
+
+module.exports = ldexp;
+
+},{"./ldexp.js":256}],256:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// NOTES //
+
+/*
+* => ldexp: load exponent (see [The Open Group]{@link http://pubs.opengroup.org/onlinepubs/9699919799/functions/ldexp.html} and [cppreference]{@link http://en.cppreference.com/w/c/numeric/math/ldexp}).
+*/
+
+
+// MODULES //
+
+var PINF = require( '@stdlib/constants/math/float64-pinf' );
+var NINF = require( '@stdlib/constants/math/float64-ninf' );
+var BIAS = require( '@stdlib/constants/math/float64-exponent-bias' );
+var MAX_EXPONENT = require( '@stdlib/constants/math/float64-max-base2-exponent' );
+var MAX_SUBNORMAL_EXPONENT = require( '@stdlib/constants/math/float64-max-base2-exponent-subnormal' );
+var MIN_SUBNORMAL_EXPONENT = require( '@stdlib/constants/math/float64-min-base2-exponent-subnormal' );
+var isnan = require( '@stdlib/math/base/assert/is-nan' );
+var isInfinite = require( '@stdlib/math/base/assert/is-infinite' );
+var copysign = require( '@stdlib/math/base/special/copysign' );
+var normalize = require( '@stdlib/number/float64/base/normalize' );
+var floatExp = require( '@stdlib/number/float64/base/exponent' );
+var toWords = require( '@stdlib/number/float64/base/to-words' );
+var fromWords = require( '@stdlib/number/float64/base/from-words' );
+
+
+// VARIABLES //
+
+// 1/(1<<52) = 1/(2**52) = 1/4503599627370496
+var TWO52_INV = 2.220446049250313e-16;
+
+// Exponent all 0s: 1 00000000000 11111111111111111111 => 2148532223
+var CLEAR_EXP_MASK = 0x800fffff>>>0; // asm type annotation
+
+// Normalization workspace:
+var FRAC = [ 0.0, 0.0 ]; // WARNING: not thread safe
+
+// High/low words workspace:
+var WORDS = [ 0, 0 ]; // WARNING: not thread safe
+
+
+// MAIN //
+
+/**
+* Multiplies a double-precision floating-point number by an integer power of two.
+*
+* @param {number} frac - fraction
+* @param {integer} exp - exponent
+* @returns {number} double-precision floating-point number
+*
+* @example
+* var x = ldexp( 0.5, 3 ); // => 0.5 * 2^3 = 0.5 * 8
+* // returns 4.0
+*
+* @example
+* var x = ldexp( 4.0, -2 ); // => 4 * 2^(-2) = 4 * (1/4)
+* // returns 1.0
+*
+* @example
+* var x = ldexp( 0.0, 20 );
+* // returns 0.0
+*
+* @example
+* var x = ldexp( -0.0, 39 );
+* // returns -0.0
+*
+* @example
+* var x = ldexp( NaN, -101 );
+* // returns NaN
+*
+* @example
+* var x = ldexp( Infinity, 11 );
+* // returns Infinity
+*
+* @example
+* var x = ldexp( -Infinity, -118 );
+* // returns -Infinity
+*/
+function ldexp( frac, exp ) {
+	var high;
+	var m;
+	if (
+		frac === 0.0 || // handles +-0
+		isnan( frac ) ||
+		isInfinite( frac )
+	) {
+		return frac;
+	}
+	// Normalize the input fraction:
+	normalize( FRAC, frac );
+	frac = FRAC[ 0 ];
+	exp += FRAC[ 1 ];
+
+	// Extract the exponent from `frac` and add it to `exp`:
+	exp += floatExp( frac );
+
+	// Check for underflow/overflow...
+	if ( exp < MIN_SUBNORMAL_EXPONENT ) {
+		return copysign( 0.0, frac );
+	}
+	if ( exp > MAX_EXPONENT ) {
+		if ( frac < 0.0 ) {
+			return NINF;
+		}
+		return PINF;
+	}
+	// Check for a subnormal and scale accordingly to retain precision...
+	if ( exp <= MAX_SUBNORMAL_EXPONENT ) {
+		exp += 52;
+		m = TWO52_INV;
+	} else {
+		m = 1.0;
+	}
+	// Split the fraction into higher and lower order words:
+	toWords( WORDS, frac );
+	high = WORDS[ 0 ];
+
+	// Clear the exponent bits within the higher order word:
+	high &= CLEAR_EXP_MASK;
+
+	// Set the exponent bits to the new exponent:
+	high |= ((exp+BIAS) << 20);
+
+	// Create a new floating-point number:
+	return m * fromWords( high, WORDS[ 1 ] );
+}
+
+
+// EXPORTS //
+
+module.exports = ldexp;
+
+},{"@stdlib/constants/math/float64-exponent-bias":208,"@stdlib/constants/math/float64-max-base2-exponent":212,"@stdlib/constants/math/float64-max-base2-exponent-subnormal":211,"@stdlib/constants/math/float64-min-base2-exponent-subnormal":214,"@stdlib/constants/math/float64-ninf":215,"@stdlib/constants/math/float64-pinf":216,"@stdlib/math/base/assert/is-infinite":229,"@stdlib/math/base/assert/is-nan":233,"@stdlib/math/base/special/copysign":248,"@stdlib/number/float64/base/exponent":284,"@stdlib/number/float64/base/from-words":286,"@stdlib/number/float64/base/normalize":292,"@stdlib/number/float64/base/to-words":301}],257:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Evaluate the natural logarithm.
+*
+* @module @stdlib/math/base/special/ln
+*
+* @example
+* var ln = require( '@stdlib/math/base/special/ln' );
+*
+* var v = ln( 4.0 );
+* // returns ~1.386
+*
+* v = ln( 0.0 );
+* // returns -Infinity
+*
+* v = ln( Infinity );
+* // returns Infinity
+*
+* v = ln( NaN );
+* // returns NaN
+*
+* v = ln( -4.0 );
+* // returns NaN
+*/
+
+// MODULES //
+
+var ln = require( './ln.js' );
+
+
+// EXPORTS //
+
+module.exports = ln;
+
+},{"./ln.js":258}],258:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*
+*
+* ## Notice
+*
+* The following copyright and license were part of the original implementation available as part of [FreeBSD]{@link https://svnweb.freebsd.org/base/release/9.3.0/lib/msun/src/e_log.c}. The implementation follows the original, but has been modified for JavaScript.
+*
+* ```text
+* Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+*
+* Developed at SunPro, a Sun Microsystems, Inc. business.
+* Permission to use, copy, modify, and distribute this
+* software is freely granted, provided that this notice
+* is preserved.
+* ```
+*/
+
+'use strict';
+
+// MODULES //
+
+var getHighWord = require( '@stdlib/number/float64/base/get-high-word' );
+var setHighWord = require( '@stdlib/number/float64/base/set-high-word' );
+var isnan = require( '@stdlib/math/base/assert/is-nan' );
+var BIAS = require( '@stdlib/constants/math/float64-exponent-bias' );
+var NINF = require( '@stdlib/constants/math/float64-ninf' );
+var polyvalP = require( './polyval_p.js' );
+var polyvalQ = require( './polyval_q.js' );
+
+
+// VARIABLES //
+
+var LN2_HI = 6.93147180369123816490e-01; // 3FE62E42 FEE00000
+var LN2_LO = 1.90821492927058770002e-10; // 3DEA39EF 35793C76
+var TWO54 = 1.80143985094819840000e+16;  // 0x43500000, 0x00000000
+var ONE_THIRD = 0.33333333333333333;
+
+// 0x000fffff = 1048575 => 0 00000000000 11111111111111111111
+var HIGH_SIGNIFICAND_MASK = 0x000fffff|0; // asm type annotation
+
+// 0x7ff00000 = 2146435072 => 0 11111111111 00000000000000000000 => biased exponent: 2047 = 1023+1023 => 2^1023
+var HIGH_MAX_NORMAL_EXP = 0x7ff00000|0; // asm type annotation
+
+// 0x00100000 = 1048576 => 0 00000000001 00000000000000000000 => biased exponent: 1 = -1022+1023 => 2^-1022
+var HIGH_MIN_NORMAL_EXP = 0x00100000|0; // asm type annotation
+
+// 0x3ff00000 = 1072693248 => 0 01111111111 00000000000000000000 => biased exponent: 1023 = 0+1023 => 2^0 = 1
+var HIGH_BIASED_EXP_0 = 0x3ff00000|0; // asm type annotation
+
+
+// MAIN //
+
+/**
+* Evaluates the natural logarithm.
+*
+* @param {NonNegativeNumber} x - input value
+* @returns {number} function value
+*
+* @example
+* var v = ln( 4.0 );
+* // returns ~1.386
+*
+* @example
+* var v = ln( 0.0 );
+* // returns -Infinity
+*
+* @example
+* var v = ln( Infinity );
+* // returns Infinity
+*
+* @example
+* var v = ln( NaN );
+* // returns NaN
+*
+* @example
+* var v = ln( -4.0 );
+* // returns NaN
+*/
+function ln( x ) {
+	var hfsq;
+	var hx;
+	var t2;
+	var t1;
+	var k;
+	var R;
+	var f;
+	var i;
+	var j;
+	var s;
+	var w;
+	var z;
+
+	if ( x === 0.0 ) {
+		return NINF;
+	}
+	if ( isnan( x ) || x < 0.0 ) {
+		return NaN;
+	}
+	hx = getHighWord( x );
+	k = 0|0; // asm type annotation
+	if ( hx < HIGH_MIN_NORMAL_EXP ) {
+		// Case: 0 < x < 2**-1022
+		k -= 54|0; // asm type annotation
+
+		// Subnormal number, scale up `x`:
+		x *= TWO54;
+		hx = getHighWord( x );
+	}
+	if ( hx >= HIGH_MAX_NORMAL_EXP ) {
+		return x + x;
+	}
+	k += ( ( hx>>20 ) - BIAS )|0; // asm type annotation
+	hx &= HIGH_SIGNIFICAND_MASK;
+	i = ( (hx+0x95f64) & 0x100000 )|0; // asm type annotation
+
+	// Normalize `x` or `x/2`...
+	x = setHighWord( x, hx|(i^HIGH_BIASED_EXP_0) );
+	k += ( i>>20 )|0; // asm type annotation
+	f = x - 1.0;
+	if ( (HIGH_SIGNIFICAND_MASK&(2+hx)) < 3 ) {
+		// Case: -2**-20 <= f < 2**-20
+		if ( f === 0.0 ) {
+			if ( k === 0 ) {
+				return 0.0;
+			}
+			return (k * LN2_HI) + (k * LN2_LO);
+		}
+		R = f * f * ( 0.5 - (ONE_THIRD*f) );
+		if ( k === 0 ) {
+			return f - R;
+		}
+		return (k * LN2_HI) - ( (R-(k*LN2_LO)) - f );
+	}
+	s = f / (2.0 + f);
+	z = s * s;
+	i = ( hx - 0x6147a )|0; // asm type annotation
+	w = z * z;
+	j = ( 0x6b851 - hx )|0; // asm type annotation
+	t1 = w * polyvalP( w );
+	t2 = z * polyvalQ( w );
+	i |= j;
+	R = t2 + t1;
+	if ( i > 0 ) {
+		hfsq = 0.5 * f * f;
+		if ( k === 0 ) {
+			return f - ( hfsq - (s * (hfsq+R)) );
+		}
+		return (k * LN2_HI) - ( hfsq - ((s*(hfsq+R))+(k*LN2_LO)) - f );
+	}
+	if ( k === 0 ) {
+		return f - (s*(f-R));
+	}
+	return (k * LN2_HI) - ( ( (s*(f-R)) - (k*LN2_LO) ) - f );
+}
+
+
+// EXPORTS //
+
+module.exports = ln;
+
+},{"./polyval_p.js":259,"./polyval_q.js":260,"@stdlib/constants/math/float64-exponent-bias":208,"@stdlib/constants/math/float64-ninf":215,"@stdlib/math/base/assert/is-nan":233,"@stdlib/number/float64/base/get-high-word":290,"@stdlib/number/float64/base/set-high-word":296}],259:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+/* This is a generated file. Do not edit directly. */
+'use strict';
+
+// MAIN //
+
+/**
+* Evaluates a polynomial.
+*
+* ## Notes
+*
+* -   The implementation uses [Horner's rule][horners-method] for efficient computation.
+*
+* [horners-method]: https://en.wikipedia.org/wiki/Horner%27s_method
+*
+*
+* @private
+* @param {number} x - value at which to evaluate the polynomial
+* @returns {number} evaluated polynomial
+*/
+function evalpoly( x ) {
+	if ( x === 0.0 ) {
+		return 0.3999999999940942;
+	}
+	return 0.3999999999940942 + (x * (0.22222198432149784 + (x * 0.15313837699209373))); // eslint-disable-line max-len
+}
+
+
+// EXPORTS //
+
+module.exports = evalpoly;
+
+},{}],260:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+/* This is a generated file. Do not edit directly. */
+'use strict';
+
+// MAIN //
+
+/**
+* Evaluates a polynomial.
+*
+* ## Notes
+*
+* -   The implementation uses [Horner's rule][horners-method] for efficient computation.
+*
+* [horners-method]: https://en.wikipedia.org/wiki/Horner%27s_method
+*
+*
+* @private
+* @param {number} x - value at which to evaluate the polynomial
+* @returns {number} evaluated polynomial
+*/
+function evalpoly( x ) {
+	if ( x === 0.0 ) {
+		return 0.6666666666666735;
+	}
+	return 0.6666666666666735 + (x * (0.2857142874366239 + (x * (0.1818357216161805 + (x * 0.14798198605116586))))); // eslint-disable-line max-len
+}
+
+
+// EXPORTS //
+
+module.exports = evalpoly;
+
+},{}],261:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Return the maximum value.
+*
+* @module @stdlib/math/base/special/max
+*
+* @example
+* var max = require( '@stdlib/math/base/special/max' );
+*
+* var v = max( 3.14, 4.2 );
+* // returns 4.2
+*
+* v = max( 5.9, 3.14, 4.2 );
+* // returns 5.9
+*
+* v = max( 3.14, NaN );
+* // returns NaN
+*
+* v = max( +0.0, -0.0 );
+* // returns +0.0
+*/
+
+// MODULES //
+
+var max = require( './max.js' );
+
+
+// EXPORTS //
+
+module.exports = max;
+
+},{"./max.js":262}],262:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isPositiveZero = require( '@stdlib/math/base/assert/is-positive-zero' );
+var isnan = require( '@stdlib/math/base/assert/is-nan' );
+var NINF = require( '@stdlib/constants/math/float64-ninf' );
+var PINF = require( '@stdlib/constants/math/float64-pinf' );
+
+
+// MAIN //
+
+/**
+* Returns the maximum value.
+*
+* @param {number} [x] - first number
+* @param {number} [y] - second number
+* @param {...number} [args] - numbers
+* @returns {number} maximum value
+*
+* @example
+* var v = max( 3.14, 4.2 );
+* // returns 4.2
+*
+* @example
+* var v = max( 5.9, 3.14, 4.2 );
+* // returns 5.9
+*
+* @example
+* var v = max( 3.14, NaN );
+* // returns NaN
+*
+* @example
+* var v = max( +0.0, -0.0 );
+* // returns +0.0
+*/
+function max( x, y ) {
+	var len;
+	var m;
+	var v;
+	var i;
+
+	len = arguments.length;
+	if ( len === 2 ) {
+		if ( isnan( x ) || isnan( y ) ) {
+			return NaN;
+		}
+		if ( x === PINF || y === PINF ) {
+			return PINF;
+		}
+		if ( x === y && x === 0.0 ) {
+			if ( isPositiveZero( x ) ) {
+				return x;
+			}
+			return y;
+		}
+		if ( x > y ) {
+			return x;
+		}
+		return y;
+	}
+	m = NINF;
+	for ( i = 0; i < len; i++ ) {
+		v = arguments[ i ];
+		if ( isnan( v ) || v === PINF ) {
+			return v;
+		}
+		if ( v > m ) {
+			m = v;
+		} else if (
+			v === m &&
+			v === 0.0 &&
+			isPositiveZero( v )
+		) {
+			m = v;
+		}
+	}
+	return m;
+}
+
+
+// EXPORTS //
+
+module.exports = max;
+
+},{"@stdlib/constants/math/float64-ninf":215,"@stdlib/constants/math/float64-pinf":216,"@stdlib/math/base/assert/is-nan":233,"@stdlib/math/base/assert/is-positive-zero":239}],263:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Evaluate the exponential function.
+*
+* @module @stdlib/math/base/special/pow
+*
+* @example
+* var pow = require( '@stdlib/math/base/special/pow' );
+*
+* var v = pow( 2.0, 3.0 );
+* // returns 8.0
+*
+* v = pow( 4.0, 0.5 );
+* // returns 2.0
+*
+* v = pow( 100.0, 0.0 );
+* // returns 1.0
+*
+* v = pow( 3.141592653589793, 5.0 );
+* // returns ~306.0197
+*
+* v = pow( 3.141592653589793, -0.2 );
+* // returns ~0.7954
+*
+* v = pow( NaN, 3.0 );
+* // returns NaN
+*
+* v = pow( 5.0, NaN );
+* // returns NaN
+*
+* v = pow( NaN, NaN );
+* // returns NaN
+*/
+
+// MODULES //
+
+var pow = require( './pow.js' );
+
+
+// EXPORTS //
+
+module.exports = pow;
+
+},{"./pow.js":269}],264:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*
+*
+* ## Notice
+*
+* The following copyright and license were part of the original implementation available as part of [FreeBSD]{@link https://svnweb.freebsd.org/base/release/9.3.0/lib/msun/src/s_pow.c}. The implementation follows the original, but has been modified for JavaScript.
+*
+* ```text
+* Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
+*
+* Developed at SunPro, a Sun Microsystems, Inc. business.
+* Permission to use, copy, modify, and distribute this
+* software is freely granted, provided that this notice
+* is preserved.
+* ```
+*/
+
+'use strict';
+
+// MODULES //
+
+var getHighWord = require( '@stdlib/number/float64/base/get-high-word' );
+var setLowWord = require( '@stdlib/number/float64/base/set-low-word' );
+var setHighWord = require( '@stdlib/number/float64/base/set-high-word' );
+var BIAS = require( '@stdlib/constants/math/float64-exponent-bias' );
+var polyvalL = require( './polyval_l.js' );
+
+
+// VARIABLES //
+
+// 0x000fffff = 1048575 => 0 00000000000 11111111111111111111
+var HIGH_SIGNIFICAND_MASK = 0x000fffff|0; // asm type annotation
+
+// 0x00100000 = 1048576 => 0 00000000001 00000000000000000000 => biased exponent: 1 = -1022+1023 => 2^-1022
+var HIGH_MIN_NORMAL_EXP = 0x00100000|0; // asm type annotation
+
+// 0x3ff00000 = 1072693248 => 0 01111111111 00000000000000000000 => biased exponent: 1023 = 0+1023 => 2^0 = 1
+var HIGH_BIASED_EXP_0 = 0x3ff00000|0; // asm type annotation
+
+// 0x20000000 = 536870912 => 0 01000000000 00000000000000000000 => biased exponent: 512 = -511+1023
+var HIGH_BIASED_EXP_NEG_512 = 0x20000000|0; // asm type annotation
+
+// 0x00080000 = 524288 => 0 00000000000 10000000000000000000
+var HIGH_SIGNIFICAND_HALF = 0x00080000|0; // asm type annotation
+
+// TODO: consider making an external constant
+var HIGH_NUM_SIGNIFICAND_BITS = 20|0; // asm type annotation
+
+var TWO53 = 9007199254740992.0;	// 0x43400000, 0x00000000
+
+// 2/(3*LN2)
+var CP = 9.61796693925975554329e-01; // 0x3FEEC709, 0xDC3A03FD
+
+// (float)CP
+var CP_HI = 9.61796700954437255859e-01; // 0x3FEEC709, 0xE0000000
+
+// Low: CP_HI
+var CP_LO = -7.02846165095275826516e-09; // 0xBE3E2FE0, 0x145B01F5
+
+var BP = [
+	1.0,
+	1.5
+];
+var DP_HI = [
+	0.0,
+	5.84962487220764160156e-01 // 0x3FE2B803, 0x40000000
+];
+var DP_LO = [
+	0.0,
+	1.35003920212974897128e-08 // 0x3E4CFDEB, 0x43CFD006
+];
+
+
+// MAIN //
+
+/**
+* Computes \\(\operatorname{log2}(ax)\\).
+*
+* @private
+* @param {Array} out - output array
+* @param {number} ax - absolute value of `x`
+* @param {number} ahx - high word of `ax`
+* @returns {Array} output array containing a tuple comprised of high and low parts
+*
+* @example
+* var t = log2ax( [ 0.0, 0.0 ], 9.0, 1075970048 ); // => [ t1, t2 ]
+* // returns [ 3.169923782348633, 0.0000012190936795504075 ]
+*/
+function log2ax( out, ax, ahx ) {
+	var tmp;
+	var ss; // `hs + ls`
+	var s2; // `ss` squared
+	var hs;
+	var ls;
+	var ht;
+	var lt;
+	var bp; // `BP` constant
+	var dp; // `DP` constant
+	var hp;
+	var lp;
+	var hz;
+	var lz;
+	var t1;
+	var t2;
+	var t;
+	var r;
+	var u;
+	var v;
+	var n;
+	var j;
+	var k;
+
+	n = 0|0; // asm type annotation
+
+	// Check if `x` is subnormal...
+	if ( ahx < HIGH_MIN_NORMAL_EXP ) {
+		ax *= TWO53;
+		n -= 53|0; // asm type annotation
+		ahx = getHighWord( ax );
+	}
+	// Extract the unbiased exponent of `x`:
+	n += ((ahx >> HIGH_NUM_SIGNIFICAND_BITS) - BIAS)|0; // asm type annotation
+
+	// Isolate the significand bits of `x`:
+	j = (ahx & HIGH_SIGNIFICAND_MASK)|0; // asm type annotation
+
+	// Normalize `ahx` by setting the (biased) exponent to `1023`:
+	ahx = (j | HIGH_BIASED_EXP_0)|0; // asm type annotation
+
+	// Determine the interval of `|x|` by comparing significand bits...
+
+	// |x| < sqrt(3/2)
+	if ( j <= 0x3988E ) { // 0 00000000000 00111001100010001110
+		k = 0;
+	}
+	// |x| < sqrt(3)
+	else if ( j < 0xBB67A ) { // 0 00000000000 10111011011001111010
+		k = 1;
+	}
+	// |x| >= sqrt(3)
+	else {
+		k = 0;
+		n += 1|0; // asm type annotation
+		ahx -= HIGH_MIN_NORMAL_EXP;
+	}
+	// Load the normalized high word into `|x|`:
+	ax = setHighWord( ax, ahx );
+
+	// Compute `ss = hs + ls = (x-1)/(x+1)` or `(x-1.5)/(x+1.5)`:
+	bp = BP[ k ]; // BP[0] = 1.0, BP[1] = 1.5
+	u = ax - bp; // (x-1) || (x-1.5)
+	v = 1.0 / (ax + bp); // 1/(x+1) || 1/(x+1.5)
+	ss = u * v;
+	hs = setLowWord( ss, 0 ); // set all low word (less significant significand) bits to 0s
+
+	// Compute `ht = ax + bp` (via manipulation, i.e., bit flipping, of the high word):
+	tmp = ((ahx>>1) | HIGH_BIASED_EXP_NEG_512) + HIGH_SIGNIFICAND_HALF;
+	tmp += (k << 18); // `(k<<18)` can be considered the word equivalent of `1.0` or `1.5`
+	ht = setHighWord( 0.0, tmp );
+	lt = ax - (ht - bp);
+	ls = v * ( ( u - (hs*ht) ) - ( hs*lt ) );
+
+	// Compute `log(ax)`...
+
+	s2 = ss * ss;
+	r = s2 * s2 * polyvalL( s2 );
+	r += ls * (hs + ss);
+	s2 = hs * hs;
+	ht = 3.0 + s2 + r;
+	ht = setLowWord( ht, 0 );
+	lt = r - ((ht-3.0) - s2);
+
+	// u+v = ss*(1+...):
+	u = hs * ht;
+	v = ( ls*ht ) + ( lt*ss );
+
+	// 2/(3LN2) * (ss+...):
+	hp = u + v;
+	hp = setLowWord( hp, 0 );
+	lp = v - (hp - u);
+	hz = CP_HI * hp; // CP_HI+CP_LO = 2/(3*LN2)
+	lz = ( CP_LO*hp ) + ( lp*CP ) + DP_LO[ k ];
+
+	// log2(ax) = (ss+...)*2/(3*LN2) = n + dp + hz + lz
+	dp = DP_HI[ k ];
+	t = n;
+	t1 = ((hz+lz) + dp) + t; // log2(ax)
+	t1 = setLowWord( t1, 0 );
+	t2 = lz - (((t1-t) - dp) - hz);
+
+	out[ 0 ] = t1;
+	out[ 1 ] = t2;
+	return out;
+}
+
+
+// EXPORTS //
+
+module.exports = log2ax;
+
+},{"./polyval_l.js":266,"@stdlib/constants/math/float64-exponent-bias":208,"@stdlib/number/float64/base/get-high-word":290,"@stdlib/number/float64/base/set-high-word":296,"@stdlib/number/float64/base/set-low-word":298}],265:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*
+*
+* ## Notice
+*
+* The following copyright and license were part of the original implementation available as part of [FreeBSD]{@link https://svnweb.freebsd.org/base/release/9.3.0/lib/msun/src/s_pow.c}. The implementation follows the original, but has been modified for JavaScript.
+*
+* ```text
+* Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
+*
+* Developed at SunPro, a Sun Microsystems, Inc. business.
+* Permission to use, copy, modify, and distribute this
+* software is freely granted, provided that this notice
+* is preserved.
+* ```
+*/
+
+'use strict';
+
+// MODULES //
+
+var setLowWord = require( '@stdlib/number/float64/base/set-low-word' );
+var polyvalW = require( './polyval_w.js' );
+
+
+// VARIABLES //
+
+// 1/LN2
+var INV_LN2 = 1.44269504088896338700e+00; // 0x3FF71547, 0x652B82FE
+
+// High (24 bits): 1/LN2
+var INV_LN2_HI = 1.44269502162933349609e+00; // 0x3FF71547, 0x60000000
+
+// Low: 1/LN2
+var INV_LN2_LO = 1.92596299112661746887e-08; // 0x3E54AE0B, 0xF85DDF44
+
+
+// MAIN //
+
+/**
+* Computes \\(\operatorname{log}(x)\\) assuming \\(|1-x|\\) is small and using the approximation \\(x - x^2/2 + x^3/3 - x^4/4\\).
+*
+* @private
+* @param {Array} out - output array
+* @param {number} ax - absolute value of `x`
+* @returns {Array} output array containing a tuple comprised of high and low parts
+*
+* @example
+* var t = logx( [ 0.0, 0.0 ], 9.0 ); // => [ t1, t2 ]
+* // returns [ -1265.7236328125, -0.0008163940840404393 ]
+*/
+function logx( out, ax ) {
+	var t2;
+	var t1;
+	var t;
+	var w;
+	var u;
+	var v;
+
+	t = ax - 1.0; // `t` has `20` trailing zeros
+	w = t * t * polyvalW( t );
+	u = INV_LN2_HI * t; // `INV_LN2_HI` has `21` significant bits
+	v = ( t*INV_LN2_LO ) - ( w*INV_LN2 );
+	t1 = u + v;
+	t1 = setLowWord( t1, 0 );
+	t2 = v - (t1 - u);
+
+	out[ 0 ] = t1;
+	out[ 1 ] = t2;
+	return out;
+}
+
+
+// EXPORTS //
+
+module.exports = logx;
+
+},{"./polyval_w.js":268,"@stdlib/number/float64/base/set-low-word":298}],266:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+/* This is a generated file. Do not edit directly. */
+'use strict';
+
+// MAIN //
+
+/**
+* Evaluates a polynomial.
+*
+* ## Notes
+*
+* -   The implementation uses [Horner's rule][horners-method] for efficient computation.
+*
+* [horners-method]: https://en.wikipedia.org/wiki/Horner%27s_method
+*
+*
+* @private
+* @param {number} x - value at which to evaluate the polynomial
+* @returns {number} evaluated polynomial
+*/
+function evalpoly( x ) {
+	if ( x === 0.0 ) {
+		return 0.5999999999999946;
+	}
+	return 0.5999999999999946 + (x * (0.4285714285785502 + (x * (0.33333332981837743 + (x * (0.272728123808534 + (x * (0.23066074577556175 + (x * 0.20697501780033842))))))))); // eslint-disable-line max-len
+}
+
+
+// EXPORTS //
+
+module.exports = evalpoly;
+
+},{}],267:[function(require,module,exports){
+module.exports=require(252)
+},{}],268:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+/* This is a generated file. Do not edit directly. */
+'use strict';
+
+// MAIN //
+
+/**
+* Evaluates a polynomial.
+*
+* ## Notes
+*
+* -   The implementation uses [Horner's rule][horners-method] for efficient computation.
+*
+* [horners-method]: https://en.wikipedia.org/wiki/Horner%27s_method
+*
+*
+* @private
+* @param {number} x - value at which to evaluate the polynomial
+* @returns {number} evaluated polynomial
+*/
+function evalpoly( x ) {
+	if ( x === 0.0 ) {
+		return 0.5;
+	}
+	return 0.5 + (x * (-0.3333333333333333 + (x * 0.25)));
+}
+
+
+// EXPORTS //
+
+module.exports = evalpoly;
+
+},{}],269:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*
+*
+* ## Notice
+*
+* The following copyright and license were part of the original implementation available as part of [FreeBSD]{@link https://svnweb.freebsd.org/base/release/9.3.0/lib/msun/src/s_pow.c}. The implementation follows the original, but has been modified for JavaScript.
+*
+* ```text
+* Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
+*
+* Developed at SunPro, a Sun Microsystems, Inc. business.
+* Permission to use, copy, modify, and distribute this
+* software is freely granted, provided that this notice
+* is preserved.
+* ```
+*/
+
+'use strict';
+
+// MODULES //
+
+var isnan = require( '@stdlib/math/base/assert/is-nan' );
+var isOdd = require( '@stdlib/math/base/assert/is-odd' );
+var isInfinite = require( '@stdlib/math/base/assert/is-infinite' );
+var isInteger = require( '@stdlib/math/base/assert/is-integer' );
+var sqrt = require( '@stdlib/math/base/special/sqrt' );
+var abs = require( '@stdlib/math/base/special/abs' );
+var toWords = require( '@stdlib/number/float64/base/to-words' );
+var setLowWord = require( '@stdlib/number/float64/base/set-low-word' );
+var uint32ToInt32 = require( '@stdlib/number/uint32/base/to-int32' );
+var NINF = require( '@stdlib/constants/math/float64-ninf' );
+var PINF = require( '@stdlib/constants/math/float64-pinf' );
+var xIsZero = require( './x_is_zero.js' );
+var yIsHuge = require( './y_is_huge.js' );
+var yIsInfinite = require( './y_is_infinite.js' );
+var log2ax = require( './log2ax.js' );
+var logx = require( './logx.js' );
+var pow2 = require( './pow2.js' );
+
+
+// VARIABLES //
+
+// 0x7fffffff = 2147483647 => 0 11111111111 11111111111111111111
+var ABS_MASK = 0x7fffffff|0; // asm type annotation
+
+// 0x3fefffff = 1072693247 => 0 01111111110 11111111111111111111 => biased exponent: 1022 = -1+1023 => 2^-1
+var HIGH_MAX_NEAR_UNITY = 0x3fefffff|0; // asm type annotation
+
+// 0x41e00000 = 1105199104 => 0 10000011110 00000000000000000000 => biased exponent: 1054 = 31+1023 => 2^31
+var HIGH_BIASED_EXP_31 = 0x41e00000|0; // asm type annotation
+
+// 0x43f00000 = 1139802112 => 0 10000111111 00000000000000000000 => biased exponent: 1087 = 64+1023 => 2^64
+var HIGH_BIASED_EXP_64 = 0x43f00000|0; // asm type annotation
+
+// 0x40900000 = 1083179008 => 0 10000001001 00000000000000000000 => biased exponent: 1033 = 10+1023 => 2^10 = 1024
+var HIGH_BIASED_EXP_10 = 0x40900000|0; // asm type annotation
+
+// 0x3ff00000 = 1072693248 => 0 01111111111 00000000000000000000 => biased exponent: 1023 = 0+1023 => 2^0 = 1
+var HIGH_BIASED_EXP_0 = 0x3ff00000|0; // asm type annotation
+
+// 0x4090cc00 = 1083231232 => 0 10000001001 00001100110000000000
+var HIGH_1075 = 0x4090cc00|0; // asm type annotation
+
+// 0xc090cc00 = 3230714880 => 1 10000001001 00001100110000000000
+var HIGH_NEG_1075 = 0xc090cc00>>>0; // asm type annotation
+
+var HIGH_NUM_NONSIGN_BITS = 31|0; // asm type annotation
+
+var HUGE = 1.0e300;
+var TINY = 1.0e-300;
+
+// -(1024-log2(ovfl+.5ulp))
+var OVT = 8.0085662595372944372e-17;
+
+// High/low words workspace:
+var WORDS = [ 0|0, 0|0 ]; // WARNING: not thread safe
+
+// Log workspace:
+var LOG_WORKSPACE = [ 0.0, 0.0 ]; // WARNING: not thread safe
+
+
+// MAIN //
+
+/**
+* Evaluates the exponential function.
+*
+* ## Method
+*
+* 1.  Let \\(x = 2^n (1+f)\\).
+*
+* 2.  Compute \\(\operatorname{log2}(x)\\) as
+*
+*     ```tex
+*     \operatorname{log2}(x) = w_1 + w_2
+*     ```
+*
+*     where \\(w_1\\) has \\(53 - 24 = 29\\) bit trailing zeros.
+*
+* 3.  Compute
+*
+*     ```tex
+*     y \cdot \operatorname{log2}(x) = n + y^\prime
+*     ```
+*
+*     by simulating multi-precision arithmetic, where \\(|y^\prime| \leq 0.5\\).
+*
+* 4.  Return
+*
+*     ```tex
+*     x^y = 2^n e^{y^\prime \cdot \mathrm{log2}}
+*     ```
+*
+* ## Special Cases
+*
+* ```tex
+* \begin{align*}
+* x^{\mathrm{NaN}} &= \mathrm{NaN} & \\
+* (\mathrm{NaN})^y &= \mathrm{NaN} & \\
+* 1^y &= 1 & \\
+* x^0 &= 1 & \\
+* x^1 &= x & \\
+* (\pm 0)^\infty &= +0 & \\
+* (\pm 0)^{-\infty} &= +\infty & \\
+* (+0)^y &= +0 & \mathrm{if}\ y > 0 \\
+* (+0)^y &= +\infty & \mathrm{if}\ y < 0 \\
+* (-0)^y &= -\infty & \mathrm{if}\ y\ \mathrm{is\ an\ odd\ integer\ and}\ y < 0 \\
+* (-0)^y &= +\infty & \mathrm{if}\ y\ \mathrm{is\ not\ an\ odd\ integer\ and}\ y < 0 \\
+* (-0)^y &= -0 & \mathrm{if}\ y\ \mathrm{is\ an\ odd\ integer\ and}\ y > 0 \\
+* (-0)^y &= +0 & \mathrm{if}\ y\ \mathrm{is\ not\ an\ odd\ integer\ and}\ y > 0 \\
+* (-1)^{\pm\infty} &= \mathrm{NaN} & \\
+* x^{\infty} &= +\infty & |x| > 1 \\
+* x^{\infty} &= +0 & |x| < 1 \\
+* x^{-\infty} &= +0 & |x| > 1 \\
+* x^{-\infty} &= +\infty & |x| < 1 \\
+* (-\infty)^y &= (-0)^y & \\
+* \infty^y &= +0 & y < 0 \\
+* \infty^y &= +\infty & y > 0 \\
+* x^y &= \mathrm{NaN} & \mathrm{if}\ y\ \mathrm{is\ not\ a\ finite\ integer\ and}\ x < 0
+* \end{align*}
+* ```
+*
+* ## Notes
+*
+* -   \\(\operatorname{pow}(x,y)\\) returns \\(x^y\\) nearly rounded. In particular, \\(\operatorname{pow}(<\mathrm{integer}>,<\mathrm{integer}>)\\) **always** returns the correct integer, provided the value is representable.
+* -   The hexadecimal values shown in the source code are the intended values for used constants. Decimal values may be used, provided the compiler will accurately convert decimal to binary in order to produce the hexadecimal values.
+*
+*
+* @param {number} x - base
+* @param {number} y - exponent
+* @returns {number} function value
+*
+* @example
+* var v = pow( 2.0, 3.0 );
+* // returns 8.0
+*
+* @example
+* var v = pow( 4.0, 0.5 );
+* // returns 2.0
+*
+* @example
+* var v = pow( 100.0, 0.0 );
+* // returns 1.0
+*
+* @example
+* var v = pow( 3.141592653589793, 5.0 );
+* // returns ~306.0197
+*
+* @example
+* var v = pow( 3.141592653589793, -0.2 );
+* // returns ~0.7954
+*
+* @example
+* var v = pow( NaN, 3.0 );
+* // returns NaN
+*
+* @example
+* var v = pow( 5.0, NaN );
+* // returns NaN
+*
+* @example
+* var v = pow( NaN, NaN );
+* // returns NaN
+*/
+function pow( x, y ) {
+	var ahx; // absolute value high word `x`
+	var ahy; // absolute value high word `y`
+	var ax;  // absolute value `x`
+	var hx;  // high word `x`
+	var lx;  // low word `x`
+	var hy;  // high word `y`
+	var ly;  // low word `y`
+	var sx;  // sign `x`
+	var sy;  // sign `y`
+	var y1;
+	var hp;
+	var lp;
+	var t;
+	var z;   // y prime
+	var j;
+	var i;
+	if ( isnan( x ) || isnan( y ) ) {
+		return NaN;
+	}
+	// Split `y` into high and low words:
+	toWords( WORDS, y );
+	hy = WORDS[ 0 ];
+	ly = WORDS[ 1 ];
+
+	// Special cases `y`...
+	if ( ly === 0 ) {
+		if ( y === 0.0 ) {
+			return 1.0;
+		}
+		if ( y === 1.0 ) {
+			return x;
+		}
+		if ( y === -1.0 ) {
+			return 1.0 / x;
+		}
+		if ( y === 0.5 ) {
+			return sqrt( x );
+		}
+		if ( y === -0.5 ) {
+			return 1.0 / sqrt( x );
+		}
+		if ( y === 2.0 ) {
+			return x * x;
+		}
+		if ( y === 3.0 ) {
+			return x * x * x;
+		}
+		if ( y === 4.0 ) {
+			x *= x;
+			return x * x;
+		}
+		if ( isInfinite( y ) ) {
+			return yIsInfinite( x, y );
+		}
+	}
+	// Split `x` into high and low words:
+	toWords( WORDS, x );
+	hx = WORDS[ 0 ];
+	lx = WORDS[ 1 ];
+
+	// Special cases `x`...
+	if ( lx === 0 ) {
+		if ( hx === 0 ) {
+			return xIsZero( x, y );
+		}
+		if ( x === 1.0 ) {
+			return 1.0;
+		}
+		if (
+			x === -1.0 &&
+			isOdd( y )
+		) {
+			return -1.0;
+		}
+		if ( isInfinite( x ) ) {
+			if ( x === NINF ) {
+				// `pow( 1/x, -y )`
+				return pow( -0.0, -y );
+			}
+			if ( y < 0.0 ) {
+				return 0.0;
+			}
+			return PINF;
+		}
+	}
+	if (
+		x < 0.0 &&
+		isInteger( y ) === false
+	) {
+		// Signal NaN...
+		return (x-x)/(x-x);
+	}
+	ax = abs( x );
+
+	// Remove the sign bits (i.e., get absolute values):
+	ahx = (hx & ABS_MASK)|0; // asm type annotation
+	ahy = (hy & ABS_MASK)|0; // asm type annotation
+
+	// Extract the sign bits:
+	sx = (hx >>> HIGH_NUM_NONSIGN_BITS)|0; // asm type annotation
+	sy = (hy >>> HIGH_NUM_NONSIGN_BITS)|0; // asm type annotation
+
+	// Determine the sign of the result...
+	if ( sx && isOdd( y ) ) {
+		sx = -1.0;
+	} else {
+		sx = 1.0;
+	}
+	// Case 1: `|y|` is huge...
+
+	// |y| > 2^31
+	if ( ahy > HIGH_BIASED_EXP_31 ) {
+		// `|y| > 2^64`, then must over- or underflow...
+		if ( ahy > HIGH_BIASED_EXP_64 ) {
+			return yIsHuge( x, y );
+		}
+		// Over- or underflow if `x` is not close to unity...
+
+		if ( ahx < HIGH_MAX_NEAR_UNITY ) {
+			// y < 0
+			if ( sy === 1 ) {
+				// Signal overflow...
+				return sx * HUGE * HUGE;
+			}
+			// Signal underflow...
+			return sx * TINY * TINY;
+		}
+		if ( ahx > HIGH_BIASED_EXP_0 ) {
+			// y > 0
+			if ( sy === 0 ) {
+				// Signal overflow...
+				return sx * HUGE * HUGE;
+			}
+			// Signal underflow...
+			return sx * TINY * TINY;
+		}
+		// At this point, `|1-x|` is tiny (`<= 2^-20`). Suffice to compute `log(x)` by `x - x^2/2 + x^3/3 - x^4/4`.
+		t = logx( LOG_WORKSPACE, ax );
+	}
+	// Case 2: `|y|` is not huge...
+	else {
+		t = log2ax( LOG_WORKSPACE, ax, ahx );
+	}
+	// Split `y` into `y1 + y2` and compute `(y1+y2) * (t1+t2)`...
+	y1 = setLowWord( y, 0 );
+	lp = ( (y-y1)*t[0] ) + ( y*t[1] );
+	hp = y1 * t[0];
+	z = lp + hp;
+
+	// Note: *can* be more performant to use `getHighWord` and `getLowWord` directly, but using `toWords` looks cleaner.
+	toWords( WORDS, z );
+	j = uint32ToInt32( WORDS[0] );
+	i = uint32ToInt32( WORDS[1] );
+
+	// z >= 1024
+	if ( j >= HIGH_BIASED_EXP_10 ) {
+		// z > 1024
+		if ( ((j-HIGH_BIASED_EXP_10)|i) !== 0 ) {
+			// Signal overflow...
+			return sx * HUGE * HUGE;
+		}
+		if ( (lp+OVT) > (z-hp) ) {
+			// Signal overflow...
+			return sx * HUGE * HUGE;
+		}
+	}
+	// z <= -1075
+	else if ( (j&ABS_MASK) >= HIGH_1075 ) {
+		// z < -1075
+		if ( ((j-HIGH_NEG_1075)|i) !== 0 ) {
+			// signal underflow...
+			return sx * TINY * TINY;
+		}
+		if ( lp <= (z-hp) ) {
+			// signal underflow...
+			return sx * TINY * TINY;
+		}
+	}
+	// Compute `2^(hp+lp)`...
+	z = pow2( j, hp, lp );
+
+	return sx * z;
+}
+
+
+// EXPORTS //
+
+module.exports = pow;
+
+},{"./log2ax.js":264,"./logx.js":265,"./pow2.js":270,"./x_is_zero.js":271,"./y_is_huge.js":272,"./y_is_infinite.js":273,"@stdlib/constants/math/float64-ninf":215,"@stdlib/constants/math/float64-pinf":216,"@stdlib/math/base/assert/is-infinite":229,"@stdlib/math/base/assert/is-integer":231,"@stdlib/math/base/assert/is-nan":233,"@stdlib/math/base/assert/is-odd":235,"@stdlib/math/base/special/abs":243,"@stdlib/math/base/special/sqrt":276,"@stdlib/number/float64/base/set-low-word":298,"@stdlib/number/float64/base/to-words":301,"@stdlib/number/uint32/base/to-int32":305}],270:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*
+*
+* ## Notice
+*
+* The following copyright and license were part of the original implementation available as part of [FreeBSD]{@link https://svnweb.freebsd.org/base/release/9.3.0/lib/msun/src/s_pow.c}. The implementation follows the original, but has been modified for JavaScript.
+*
+* ```text
+* Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
+*
+* Developed at SunPro, a Sun Microsystems, Inc. business.
+* Permission to use, copy, modify, and distribute this
+* software is freely granted, provided that this notice
+* is preserved.
+* ```
+*/
+
+'use strict';
+
+// MODULES //
+
+var getHighWord = require( '@stdlib/number/float64/base/get-high-word' );
+var setHighWord = require( '@stdlib/number/float64/base/set-high-word' );
+var setLowWord = require( '@stdlib/number/float64/base/set-low-word' );
+var uint32ToInt32 = require( '@stdlib/number/uint32/base/to-int32' );
+var ldexp = require( '@stdlib/math/base/special/ldexp' );
+var LN2 = require( '@stdlib/constants/math/float64-ln-two' );
+var BIAS = require( '@stdlib/constants/math/float64-exponent-bias' );
+var polyvalP = require( './polyval_p.js' );
+
+
+// VARIABLES //
+
+// 0x7fffffff = 2147483647 => 0 11111111111 11111111111111111111
+var ABS_MASK = 0x7fffffff|0; // asm type annotation
+
+// 0x000fffff = 1048575 => 0 00000000000 11111111111111111111
+var HIGH_SIGNIFICAND_MASK = 0x000fffff|0; // asm type annotation
+
+// 0x00100000 = 1048576 => 0 00000000001 00000000000000000000 => biased exponent: 1 = -1022+1023 => 2^-1022
+var HIGH_MIN_NORMAL_EXP = 0x00100000|0; // asm type annotation
+
+// 0x3fe00000 = 1071644672 => 0 01111111110 00000000000000000000 => biased exponent: 1022 = -1+1023 => 2^-1
+var HIGH_BIASED_EXP_NEG_1 = 0x3fe00000|0; // asm type annotation
+
+// TODO: consider making into an external constant
+var HIGH_NUM_SIGNIFICAND_BITS = 20|0; // asm type annotation
+
+// High: LN2
+var LN2_HI = 6.93147182464599609375e-01; // 0x3FE62E43, 0x00000000
+
+// Low: LN2
+var LN2_LO = -1.90465429995776804525e-09; // 0xBE205C61, 0x0CA86C39
+
+
+// MAIN //
+
+/**
+* Computes \\(2^{\mathrm{hp} + \mathrm{lp}\\).
+*
+* @private
+* @param {number} j - high word of `hp + lp`
+* @param {number} hp - first power summand
+* @param {number} lp - second power summand
+* @returns {number} function value
+*
+* @example
+* var z = pow2( 1065961648, -0.3398475646972656, -0.000002438187359100815 );
+* // returns ~0.79
+*/
+function pow2( j, hp, lp ) {
+	var tmp;
+	var t1;
+	var t;
+	var r;
+	var u;
+	var v;
+	var w;
+	var z;
+	var n;
+	var i;
+	var k;
+
+	i = (j & ABS_MASK)|0; // asm type annotation
+	k = ((i>>HIGH_NUM_SIGNIFICAND_BITS) - BIAS)|0; // asm type annotation
+	n = 0;
+
+	// `|z| > 0.5`, set `n = z+0.5`
+	if ( i > HIGH_BIASED_EXP_NEG_1 ) {
+		n = (j + (HIGH_MIN_NORMAL_EXP>>(k+1)))>>>0; // asm type annotation
+		k = (((n & ABS_MASK)>>HIGH_NUM_SIGNIFICAND_BITS) - BIAS)|0; // new k for n
+		tmp = ((n & ~(HIGH_SIGNIFICAND_MASK >> k)))>>>0; // asm type annotation
+		t = setHighWord( 0.0, tmp );
+		n = (((n & HIGH_SIGNIFICAND_MASK)|HIGH_MIN_NORMAL_EXP) >> (HIGH_NUM_SIGNIFICAND_BITS-k))>>>0; // eslint-disable-line max-len
+		if ( j < 0 ) {
+			n = -n;
+		}
+		hp -= t;
+	}
+	t = lp + hp;
+	t = setLowWord( t, 0 );
+	u = t * LN2_HI;
+	v = ( (lp - (t-hp))*LN2 ) + ( t*LN2_LO );
+	z = u + v;
+	w = v - (z - u);
+	t = z * z;
+	t1 = z - ( t*polyvalP( t ) );
+	r = ( (z*t1) / (t1-2.0) ) - ( w + (z*w) );
+	z = 1.0 - (r - z);
+	j = getHighWord( z );
+	j = uint32ToInt32( j );
+	j += (n << HIGH_NUM_SIGNIFICAND_BITS)>>>0; // asm type annotation
+
+	// Check for subnormal output...
+	if ( (j>>HIGH_NUM_SIGNIFICAND_BITS) <= 0 ) {
+		z = ldexp( z, n );
+	} else {
+		z = setHighWord( z, j );
+	}
+	return z;
+}
+
+
+// EXPORTS //
+
+module.exports = pow2;
+
+},{"./polyval_p.js":267,"@stdlib/constants/math/float64-exponent-bias":208,"@stdlib/constants/math/float64-ln-two":210,"@stdlib/math/base/special/ldexp":255,"@stdlib/number/float64/base/get-high-word":290,"@stdlib/number/float64/base/set-high-word":296,"@stdlib/number/float64/base/set-low-word":298,"@stdlib/number/uint32/base/to-int32":305}],271:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*
+*
+* ## Notice
+*
+* The following copyright and license were part of the original implementation available as part of [FreeBSD]{@link https://svnweb.freebsd.org/base/release/9.3.0/lib/msun/src/s_pow.c}. The implementation follows the original, but has been modified for JavaScript.
+*
+* ```text
+* Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
+*
+* Developed at SunPro, a Sun Microsystems, Inc. business.
+* Permission to use, copy, modify, and distribute this
+* software is freely granted, provided that this notice
+* is preserved.
+* ```
+*/
+
+'use strict';
+
+// MODULES //
+
+var isOdd = require( '@stdlib/math/base/assert/is-odd' );
+var copysign = require( '@stdlib/math/base/special/copysign' );
+var NINF = require( '@stdlib/constants/math/float64-ninf' );
+var PINF = require( '@stdlib/constants/math/float64-pinf' );
+
+
+// MAIN //
+
+/**
+* Evaluates the exponential function when \\(|x| = 0\\).
+*
+* @private
+* @param {number} x - base
+* @param {number} y - exponent
+* @returns {number} function value
+*
+* @example
+* var v = pow( 0.0, 2 );
+* // returns 0.0
+*
+* @example
+* var v = pow( -0.0, -9 );
+* // returns -Infinity
+*
+* @example
+* var v = pow( 0.0, -9 );
+* // returns Infinity
+*
+* @example
+* var v = pow( -0.0, 9 );
+* // returns 0.0
+*
+* @example
+* var v = pow( 0.0, -Infinity  );
+* // returns Infinity
+*
+* @example
+* var v = pow( 0.0, Infinity );
+* // returns 0.0
+*/
+function pow( x, y ) {
+	if ( y === NINF ) {
+		return PINF;
+	}
+	if ( y === PINF ) {
+		return 0.0;
+	}
+	if ( y > 0.0 ) {
+		if ( isOdd( y ) ) {
+			return x; // handles +-0
+		}
+		return 0.0;
+	}
+	// y < 0.0
+	if ( isOdd( y ) ) {
+		return copysign( PINF, x ); // handles +-0
+	}
+	return PINF;
+}
+
+
+// EXPORTS //
+
+module.exports = pow;
+
+},{"@stdlib/constants/math/float64-ninf":215,"@stdlib/constants/math/float64-pinf":216,"@stdlib/math/base/assert/is-odd":235,"@stdlib/math/base/special/copysign":248}],272:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*
+*
+* ## Notice
+*
+* The following copyright and license were part of the original implementation available as part of [FreeBSD]{@link https://svnweb.freebsd.org/base/release/9.3.0/lib/msun/src/s_pow.c}. The implementation follows the original, but has been modified for JavaScript.
+*
+* ```text
+* Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
+*
+* Developed at SunPro, a Sun Microsystems, Inc. business.
+* Permission to use, copy, modify, and distribute this
+* software is freely granted, provided that this notice
+* is preserved.
+* ```
+*/
+
+'use strict';
+
+// MODULES //
+
+var getHighWord = require( '@stdlib/number/float64/base/get-high-word' );
+
+
+// VARIABLES //
+
+// 0x7fffffff = 2147483647 => 0 11111111111 11111111111111111111
+var ABS_MASK = 0x7fffffff|0; // asm type annotation
+
+// 0x3fefffff = 1072693247 => 0 01111111110 11111111111111111111 => biased exponent: 1022 = -1+1023 => 2^-1
+var HIGH_MAX_NEAR_UNITY = 0x3fefffff|0; // asm type annotation
+
+var HUGE = 1.0e300;
+var TINY = 1.0e-300;
+
+
+// MAIN //
+
+/**
+* Evaluates the exponential function when \\(|y| > 2^64\\).
+*
+* @private
+* @param {number} x - base
+* @param {number} y - exponent
+* @returns {number} overflow or underflow result
+*
+* @example
+* var v = pow( 9.0, 3.6893488147419103e19 );
+* // returns Infinity
+*
+* @example
+* var v = pow( -3.14, -3.6893488147419103e19 );
+* // returns 0.0
+*/
+function pow( x, y ) {
+	var ahx;
+	var hx;
+
+	hx = getHighWord( x );
+	ahx = (hx & ABS_MASK);
+
+	if ( ahx <= HIGH_MAX_NEAR_UNITY ) {
+		if ( y < 0 ) {
+			// signal overflow...
+			return HUGE * HUGE;
+		}
+		// signal underflow...
+		return TINY * TINY;
+	}
+	// `x` has a biased exponent greater than or equal to `0`...
+
+	if ( y > 0 ) {
+		// signal overflow...
+		return HUGE * HUGE;
+	}
+	// signal underflow...
+	return TINY * TINY;
+}
+
+
+// EXPORTS //
+
+module.exports = pow;
+
+},{"@stdlib/number/float64/base/get-high-word":290}],273:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var abs = require( '@stdlib/math/base/special/abs' );
+var PINF = require( '@stdlib/constants/math/float64-pinf' );
+
+
+// MAIN //
+
+/**
+* Evaluates the exponential function when \\( y = \pm \infty\\).
+*
+* @private
+* @param {number} x - base
+* @param {number} y - exponent
+* @returns {number} function value
+*
+* @example
+* var v = pow( -1.0, Infinity );
+* // returns NaN
+*
+* @example
+* var v = pow( -1.0, -Infinity  );
+* // returns NaN
+*
+* @example
+* var v = pow( 1.0, Infinity );
+* // returns 1.0
+*
+* @example
+* var v = pow( 1.0, -Infinity  );
+* // returns 1.0
+*
+* @example
+* var v = pow( 0.5, Infinity );
+* // returns 0.0
+*
+* @example
+* var v = pow( 0.5, -Infinity  );
+* // returns Infinity
+*
+* @example
+* var v = pow( 1.5, -Infinity  );
+* // returns 0.0
+*
+* @example
+* var v = pow( 1.5, Infinity );
+* // returns Infinity
+*/
+function pow( x, y ) {
+	if ( x === -1.0 ) {
+		// Julia (0.4.2) and Python (2.7.9) return `1.0` (WTF???). JavaScript (`Math.pow`), R, and libm return `NaN`. We choose `NaN`, as the value is indeterminate; i.e., we cannot determine whether `y` is odd, even, or somewhere in between.
+		return (x-x)/(x-x); // signal NaN
+	}
+	if ( x === 1.0 ) {
+		return 1.0;
+	}
+	// (|x| > 1 && y === NINF) || (|x| < 1 && y === PINF)
+	if ( (abs(x) < 1.0) === (y === PINF) ) {
+		return 0.0;
+	}
+	// (|x| > 1 && y === PINF) || (|x| < 1 && y === NINF)
+	return PINF;
+}
+
+
+// EXPORTS //
+
+module.exports = pow;
+
+},{"@stdlib/constants/math/float64-pinf":216,"@stdlib/math/base/special/abs":243}],274:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Evaluate the signum function for a double-precision floating-point number.
+*
+* @module @stdlib/math/base/special/signum
+*
+* @example
+* var signum = require( '@stdlib/math/base/special/signum' );
+*
+* var sign = signum( -5.0 );
+* // returns -1.0
+*
+* sign = signum( 5.0 );
+* // returns 1.0
+*
+* sign = signum( -0.0 );
+* // returns -0.0
+*
+* sign = signum( 0.0 );
+* // returns 0.0
+*
+* sign = signum( NaN );
+* // returns NaN
+*/
+
+// MODULES //
+
+var signum = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = signum;
+
+},{"./main.js":275}],275:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isnan = require( '@stdlib/math/base/assert/is-nan' );
+
+
+// MAIN //
+
+/**
+* Evaluates the signum function for a double-precision floating-point number.
+*
+* @param {number} x - input value
+* @returns {number} function value
+*
+* @example
+* var sign = signum( -5.0 );
+* // returns -1.0
+*
+* @example
+* var sign = signum( 5.0 );
+* // returns 1.0
+*
+* @example
+* var sign = signum( -0.0 );
+* // returns -0.0
+*
+* @example
+* var sign = signum( 0.0 );
+* // returns 0.0
+*
+* @example
+* var sign = signum( NaN );
+* // returns NaN
+*/
+function signum( x ) {
+	if ( x === 0.0 || isnan( x ) ) {
+		return x; // addresses both +-0
+	}
+	return ( x < 0.0 ) ? -1.0 : 1.0;
+}
+
+
+// EXPORTS //
+
+module.exports = signum;
+
+},{"@stdlib/math/base/assert/is-nan":233}],276:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Compute the principal square root of a double-precision floating-point number.
+*
+* @module @stdlib/math/base/special/sqrt
+*
+* @example
+* var sqrt = require( '@stdlib/math/base/special/sqrt' );
+*
+* var v = sqrt( 4.0 );
+* // returns 2.0
+*
+* v = sqrt( 9.0 );
+* // returns 3.0
+*
+* v = sqrt( 0.0 );
+* // returns 0.0
+*
+* v = sqrt( -4.0 );
+* // returns NaN
+*
+* v = sqrt( NaN );
+* // returns NaN
+*/
+
+// MODULES //
+
+var sqrt = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = sqrt;
+
+},{"./main.js":277}],277:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+/**
+* Compute the principal square root of a double-precision floating-point number.
+*
+* @type {Function}
+* @param {number} x - input value
+* @returns {number} principal square root
+*
+* @example
+* var v = sqrt( 4.0 );
+* // returns 2.0
+*
+* v = sqrt( 9.0 );
+* // returns 3.0
+*
+* v = sqrt( 0.0 );
+* // returns 0.0
+*
+* v = sqrt( -4.0 );
+* // returns NaN
+*
+* v = sqrt( NaN );
+* // returns NaN
+*/
+var sqrt = Math.sqrt; // eslint-disable-line stdlib/no-builtin-math
+
+
+// EXPORTS //
+
+module.exports = sqrt;
+
+},{}],278:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Round a double-precision floating-point number toward zero.
+*
+* @module @stdlib/math/base/special/trunc
+*
+* @example
+* var trunc = require( '@stdlib/math/base/special/trunc' );
+*
+* var v = trunc( -4.2 );
+* // returns -4.0
+*
+* v = trunc( 9.99999 );
+* // returns 9.0
+*
+* v = trunc( 0.0 );
+* // returns 0.0
+*
+* v = trunc( -0.0 );
+* // returns -0.0
+*
+* v = trunc( NaN );
+* // returns NaN
+*
+* v = trunc( Infinity );
+* // returns Infinity
+*
+* v = trunc( -Infinity );
+* // returns -Infinity
+*/
+
+// MODULES //
+
+var trunc = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = trunc;
+
+},{"./main.js":279}],279:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var floor = require( '@stdlib/math/base/special/floor' );
+var ceil = require( '@stdlib/math/base/special/ceil' );
+
+
+// MAIN //
+
+/**
+* Rounds a double-precision floating-point number toward zero.
+*
+* @param {number} x - input value
+* @returns {number} rounded value
+*
+* @example
+* var v = trunc( -4.2 );
+* // returns -4.0
+*
+* @example
+* var v = trunc( 9.99999 );
+* // returns 9.0
+*
+* @example
+* var v = trunc( 0.0 );
+* // returns 0.0
+*
+* @example
+* var v = trunc( -0.0 );
+* // returns -0.0
+*
+* @example
+* var v = trunc( NaN );
+* // returns NaN
+*
+* @example
+* var v = trunc( Infinity );
+* // returns Infinity
+*
+* @example
+* var v = trunc( -Infinity );
+* // returns -Infinity
+*/
+function trunc( x ) {
+	if ( x < 0.0 ) {
+		return ceil( x );
+	}
+	return floor( x );
+}
+
+
+// EXPORTS //
+
+module.exports = trunc;
+
+},{"@stdlib/math/base/special/ceil":245,"@stdlib/math/base/special/floor":253}],280:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Perform C-like multiplication of two unsigned 32-bit integers.
+*
+* @module @stdlib/math/base/special/uimul
+*
+* @example
+* var uimul = require( '@stdlib/math/base/special/uimul' );
+*
+* var v = uimul( 10>>>0, 4>>>0 );
+* // returns 40
+*/
+
+// MODULES //
+
+var uimul = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = uimul;
+
+},{"./main.js":281}],281:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// VARIABLES //
+
+// Define a mask for the least significant 16 bits (low word): 65535 => 0x0000ffff => 00000000000000001111111111111111
+var LOW_WORD_MASK = 0x0000ffff>>>0; // asm type annotation
+
+
+// MAIN //
+
+/**
+* Performs C-like multiplication of two unsigned 32-bit integers.
+*
+* ## Method
+*
+* -   To emulate C-like multiplication without the aid of 64-bit integers, we recognize that a 32-bit integer can be split into two 16-bit words
+*
+*     ```tex
+*     a = w_h*2^{16} + w_l
+*     ```
+*
+*     where \\( w_h \\) is the most significant 16 bits and \\( w_l \\) is the least significant 16 bits. For example, consider the maximum unsigned 32-bit integer \\( 2^{32}-1 \\)
+*
+*     ```binarystring
+*     11111111111111111111111111111111
+*     ```
+*
+*     The 16-bit high word is then
+*
+*     ```binarystring
+*     1111111111111111
+*     ```
+*
+*     and the 16-bit low word
+*
+*     ```binarystring
+*     1111111111111111
+*     ```
+*
+*     If we cast the high word to 32-bit precision and multiply by \\( 2^{16} \\) (equivalent to a 16-bit left shift), then the bit sequence is
+*
+*     ```binarystring
+*     11111111111111110000000000000000
+*     ```
+*
+*     Similarly, upon casting the low word to 32-bit precision, the bit sequence is
+*
+*     ```binarystring
+*     00000000000000001111111111111111
+*     ```
+*
+*     From the rules of binary addition, we recognize that adding the two 32-bit values for the high and low words will return our original value \\( 2^{32}-1 \\).
+*
+* -   Accordingly, the multiplication of two 32-bit integers can be expressed
+*
+*     ```tex
+*     \begin{align*}
+*     a \cdot b &= ( a_h \cdot 2^{16} + a_l) \cdot ( b_h \cdot 2^{16} + b_l) \\
+*           &= a_l \cdot b_l + a_h \cdot b_l \cdot 2^{16} + a_l \cdot b_h \cdot 2^{16} + (a_h \cdot b_h) \cdot 2^{32} \\
+*           &= a_l \cdot b_l + (a_h \cdot b_l + a_l \cdot b_h) \cdot 2^{16} + (a_h \cdot b_h) \cdot 2^{32}
+*     \end{align*}
+*     ```
+*
+* -   We note that multiplying (dividing) an integer by \\( 2^n \\) is equivalent to performing a left (right) shift of \\( n \\) bits.
+*
+* -   Further, as we want to return an integer of the same precision, for a 32-bit integer, the return value will be modulo \\( 2^{32} \\). Stated another way, we only care about the low word of a 64-bit result.
+*
+* -   Accordingly, the last term, being evenly divisible by \\( 2^{32} \\), drops from the equation leaving the remaining two terms as the remainder.
+*
+*     ```tex
+*     a \cdot b = a_l \cdot b_l + (a_h \cdot b_l + a_l \cdot b_h) << 16
+*     ```
+*
+* -   Lastly, the second term in the above equation contributes to the middle bits and may cause the product to "overflow". However, we can disregard (`>>>0`) overflow bits due modulo arithmetic, as discussed earlier with regard to the term involving the partial product of high words.
+*
+*
+* @param {uinteger32} a - integer
+* @param {uinteger32} b - integer
+* @returns {uinteger32} product
+*
+* @example
+* var v = uimul( 10>>>0, 4>>>0 );
+* // returns 40
+*/
+function uimul( a, b ) {
+	var lbits;
+	var mbits;
+	var ha;
+	var hb;
+	var la;
+	var lb;
+
+	a >>>= 0; // asm type annotation
+	b >>>= 0; // asm type annotation
+
+	// Isolate the most significant 16-bits:
+	ha = ( a>>>16 )>>>0; // asm type annotation
+	hb = ( b>>>16 )>>>0; // asm type annotation
+
+	// Isolate the least significant 16-bits:
+	la = ( a&LOW_WORD_MASK )>>>0; // asm type annotation
+	lb = ( b&LOW_WORD_MASK )>>>0; // asm type annotation
+
+	// Compute partial sums:
+	lbits = ( la*lb )>>>0; // asm type annotation; no integer overflow possible
+	mbits = ( ((ha*lb) + (la*hb))<<16 )>>>0; // asm type annotation; possible integer overflow
+
+	// The final `>>>0` converts the intermediate sum to an unsigned integer (possible integer overflow during sum):
+	return ( lbits + mbits )>>>0; // asm type annotation
+}
+
+
+// EXPORTS //
+
+module.exports = uimul;
+
+},{}],282:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Constructor which returns a `Number` object.
+*
+* @module @stdlib/number/ctor
+*
+* @example
+* var Number = require( '@stdlib/number/ctor' );
+*
+* var v = new Number( 10.0 );
+* // returns <Number>
+*/
+
+// MODULES //
+
+var Number = require( './number.js' );
+
+
+// EXPORTS //
+
+module.exports = Number;
+
+},{"./number.js":283}],283:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// EXPORTS //
+
+module.exports = Number; // eslint-disable-line stdlib/require-globals
+
+},{}],284:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Return an integer corresponding to the unbiased exponent of a double-precision floating-point number.
+*
+* @module @stdlib/number/float64/base/exponent
+*
+* @example
+* var exponent = require( '@stdlib/number/float64/base/exponent' );
+*
+* var exp = exponent( 3.14e-307 ); // => 2**-1019 ~ 1e-307
+* // returns -1019
+*
+* exp = exponent( -3.14 );
+* // returns 1
+*
+* exp = exponent( 0.0 );
+* // returns -1023
+*
+* exp = exponent( NaN );
+* // returns 1024
+*/
+
+// MODULES //
+
+var exponent = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = exponent;
+
+},{"./main.js":285}],285:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var getHighWord = require( '@stdlib/number/float64/base/get-high-word' );
+var EXP_MASK = require( '@stdlib/constants/math/float64-high-word-exponent-mask' );
+var BIAS = require( '@stdlib/constants/math/float64-exponent-bias' );
+
+
+// MAIN //
+
+/**
+* Returns an integer corresponding to the unbiased exponent of a double-precision floating-point number.
+*
+* @param {number} x - input value
+* @returns {integer32} unbiased exponent
+*
+* @example
+* var exp = exponent( 3.14e-307 ); // => 2**-1019 ~ 1e-307
+* // returns -1019
+*
+* @example
+* var exp = exponent( -3.14 );
+* // returns 1
+*
+* @example
+* var exp = exponent( 0.0 );
+* // returns -1023
+*
+* @example
+* var exp = exponent( NaN );
+* // returns 1024
+*/
+function exponent( x ) {
+	// Extract from the input value a higher order word (unsigned 32-bit integer) which contains the exponent:
+	var high = getHighWord( x );
+
+	// Apply a mask to isolate only the exponent bits and then shift off all bits which are part of the fraction:
+	high = ( high & EXP_MASK ) >>> 20;
+
+	// Remove the bias and return:
+	return (high - BIAS)|0; // asm type annotation
+}
+
+
+// EXPORTS //
+
+module.exports = exponent;
+
+},{"@stdlib/constants/math/float64-exponent-bias":208,"@stdlib/constants/math/float64-high-word-exponent-mask":209,"@stdlib/number/float64/base/get-high-word":290}],286:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Create a double-precision floating-point number from a higher order word (unsigned 32-bit integer) and a lower order word (unsigned 32-bit integer).
+*
+* @module @stdlib/number/float64/base/from-words
+*
+* @example
+* var fromWords = require( '@stdlib/number/float64/base/from-words' );
+*
+* var v = fromWords( 1774486211, 2479577218 );
+* // returns 3.14e201
+*
+* v = fromWords( 3221823995, 1413754136 );
+* // returns -3.141592653589793
+*
+* v = fromWords( 0, 0 );
+* // returns 0.0
+*
+* v = fromWords( 2147483648, 0 );
+* // returns -0.0
+*
+* v = fromWords( 2146959360, 0 );
+* // returns NaN
+*
+* v = fromWords( 2146435072, 0 );
+* // returns Infinity
+*
+* v = fromWords( 4293918720, 0 );
+* // returns -Infinity
+*/
+
+// MODULES //
+
+var fromWords = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = fromWords;
+
+},{"./main.js":288}],287:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isLittleEndian = require( '@stdlib/assert/is-little-endian' );
+
+
+// MAIN //
+
+var indices;
+var HIGH;
+var LOW;
+
+if ( isLittleEndian === true ) {
+	HIGH = 1; // second index
+	LOW = 0; // first index
+} else {
+	HIGH = 0; // first index
+	LOW = 1; // second index
+}
+indices = {
+	'HIGH': HIGH,
+	'LOW': LOW
+};
+
+
+// EXPORTS //
+
+module.exports = indices;
+
+},{"@stdlib/assert/is-little-endian":143}],288:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var Uint32Array = require( '@stdlib/array/uint32' );
+var Float64Array = require( '@stdlib/array/float64' );
+var indices = require( './indices.js' );
+
+
+// VARIABLES //
+
+var FLOAT64_VIEW = new Float64Array( 1 );
+var UINT32_VIEW = new Uint32Array( FLOAT64_VIEW.buffer );
+
+var HIGH = indices.HIGH;
+var LOW = indices.LOW;
+
+
+// MAIN //
+
+/**
+* Creates a double-precision floating-point number from a higher order word (unsigned 32-bit integer) and a lower order word (unsigned 32-bit integer).
+*
+* ## Notes
+*
+* ```text
+* float64 (64 bits)
+* f := fraction (significand/mantissa) (52 bits)
+* e := exponent (11 bits)
+* s := sign bit (1 bit)
+*
+* |-------- -------- -------- -------- -------- -------- -------- --------|
+* |                                Float64                                |
+* |-------- -------- -------- -------- -------- -------- -------- --------|
+* |              Uint32               |               Uint32              |
+* |-------- -------- -------- -------- -------- -------- -------- --------|
+* ```
+*
+* If little endian (more significant bits last):
+*
+* ```text
+*                         <-- lower      higher -->
+* |   f7       f6       f5       f4       f3       f2    e2 | f1 |s|  e1  |
+* ```
+*
+* If big endian (more significant bits first):
+*
+* ```text
+*                         <-- higher      lower -->
+* |s| e1    e2 | f1     f2       f3       f4       f5        f6      f7   |
+* ```
+*
+*
+* In which Uint32 should we place the higher order bits? If little endian, the second; if big endian, the first.
+*
+*
+* ## References
+*
+* -   [Open Group][1]
+*
+* [1]: http://pubs.opengroup.org/onlinepubs/9629399/chap14.htm
+*
+* @param {uinteger32} high - higher order word (unsigned 32-bit integer)
+* @param {uinteger32} low - lower order word (unsigned 32-bit integer)
+* @returns {number} floating-point number
+*
+* @example
+* var v = fromWords( 1774486211, 2479577218 );
+* // returns 3.14e201
+*
+* @example
+* var v = fromWords( 3221823995, 1413754136 );
+* // returns -3.141592653589793
+*
+* @example
+* var v = fromWords( 0, 0 );
+* // returns 0.0
+*
+* @example
+* var v = fromWords( 2147483648, 0 );
+* // returns -0.0
+*
+* @example
+* var v = fromWords( 2146959360, 0 );
+* // returns NaN
+*
+* @example
+* var v = fromWords( 2146435072, 0 );
+* // returns Infinity
+*
+* @example
+* var v = fromWords( 4293918720, 0 );
+* // returns -Infinity
+*/
+function fromWords( high, low ) {
+	UINT32_VIEW[ HIGH ] = high;
+	UINT32_VIEW[ LOW ] = low;
+	return FLOAT64_VIEW[ 0 ];
+}
+
+
+// EXPORTS //
+
+module.exports = fromWords;
+
+},{"./indices.js":287,"@stdlib/array/float64":30,"@stdlib/array/uint32":48}],289:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isLittleEndian = require( '@stdlib/assert/is-little-endian' );
+
+
+// MAIN //
+
+var HIGH;
+if ( isLittleEndian === true ) {
+	HIGH = 1; // second index
+} else {
+	HIGH = 0; // first index
+}
+
+
+// EXPORTS //
+
+module.exports = HIGH;
+
+},{"@stdlib/assert/is-little-endian":143}],290:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Return an unsigned 32-bit integer corresponding to the more significant 32 bits of a double-precision floating-point number.
+*
+* @module @stdlib/number/float64/base/get-high-word
+*
+* @example
+* var getHighWord = require( '@stdlib/number/float64/base/get-high-word' );
+*
+* var w = getHighWord( 3.14e201 ); // => 01101001110001001000001011000011
+* // returns 1774486211
+*/
+
+// MODULES //
+
+var getHighWord = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = getHighWord;
+
+},{"./main.js":291}],291:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var Uint32Array = require( '@stdlib/array/uint32' );
+var Float64Array = require( '@stdlib/array/float64' );
+var HIGH = require( './high.js' );
+
+
+// VARIABLES //
+
+var FLOAT64_VIEW = new Float64Array( 1 );
+var UINT32_VIEW = new Uint32Array( FLOAT64_VIEW.buffer );
+
+
+// MAIN //
+
+/**
+* Returns an unsigned 32-bit integer corresponding to the more significant 32 bits of a double-precision floating-point number.
+*
+* ## Notes
+*
+* ```text
+* float64 (64 bits)
+* f := fraction (significand/mantissa) (52 bits)
+* e := exponent (11 bits)
+* s := sign bit (1 bit)
+*
+* |-------- -------- -------- -------- -------- -------- -------- --------|
+* |                                Float64                                |
+* |-------- -------- -------- -------- -------- -------- -------- --------|
+* |              Uint32               |               Uint32              |
+* |-------- -------- -------- -------- -------- -------- -------- --------|
+* ```
+*
+* If little endian (more significant bits last):
+*
+* ```text
+*                         <-- lower      higher -->
+* |   f7       f6       f5       f4       f3       f2    e2 | f1 |s|  e1  |
+* ```
+*
+* If big endian (more significant bits first):
+*
+* ```text
+*                         <-- higher      lower -->
+* |s| e1    e2 | f1     f2       f3       f4       f5        f6      f7   |
+* ```
+*
+* In which Uint32 can we find the higher order bits? If little endian, the second; if big endian, the first.
+*
+*
+* ## References
+*
+* -   [Open Group][1]
+*
+* [1]: http://pubs.opengroup.org/onlinepubs/9629399/chap14.htm
+*
+* @param {number} x - input value
+* @returns {uinteger32} higher order word
+*
+* @example
+* var w = getHighWord( 3.14e201 ); // => 01101001110001001000001011000011
+* // returns 1774486211
+*/
+function getHighWord( x ) {
+	FLOAT64_VIEW[ 0 ] = x;
+	return UINT32_VIEW[ HIGH ];
+}
+
+
+// EXPORTS //
+
+module.exports = getHighWord;
+
+},{"./high.js":289,"@stdlib/array/float64":30,"@stdlib/array/uint32":48}],292:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Return a normal number `y` and exponent `exp` satisfying \\(x = y \cdot 2^\mathrm{exp}\\).
+*
+* @module @stdlib/number/float64/base/normalize
+*
+* @example
+* var normalize = require( '@stdlib/number/float64/base/normalize' );
+* var pow = require( '@stdlib/math/base/special/pow' );
+*
+* var out = normalize( 3.14e-319 );
+* // returns [ 1.4141234400356668e-303, -52 ]
+*
+* var y = out[ 0 ];
+* var exp = out[ 1 ];
+*
+* var bool = ( y*pow(2.0,exp) === 3.14e-319 );
+* // returns true
+*
+* @example
+* var Float64Array = require( '@stdlib/array/float64' );
+* var normalize = require( '@stdlib/number/float64/base/normalize' );
+*
+* var out = new Float64Array( 2 );
+*
+* var v = normalize( out, 3.14e-319 );
+* // returns <Float64Array>[ 1.4141234400356668e-303, -52 ]
+*
+* var bool = ( v === out );
+* // returns true
+*/
+
+// MODULES //
+
+var normalize = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = normalize;
+
+},{"./main.js":293}],293:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var fcn = require( './normalize.js' );
+
+
+// MAIN //
+
+/**
+* Returns a normal number `y` and exponent `exp` satisfying \\(x = y \cdot 2^\mathrm{exp}\\).
+*
+* @param {(Array|TypedArray|Object)} [out] - output array
+* @param {number} x - input value
+* @returns {(Array|TypedArray|Object)} output array
+*
+* @example
+* var pow = require( '@stdlib/math/base/special/pow' );
+*
+* var out = normalize( [ 0.0, 0 ], 3.14e-319 );
+* // returns [ 1.4141234400356668e-303, -52 ]
+*
+* var y = out[ 0 ];
+* var exp = out[ 1 ];
+*
+* var bool = ( y*pow(2.0,exp) === 3.14e-319 );
+* // returns true
+*
+* @example
+* var Float64Array = require( '@stdlib/array/float64' );
+* var pow = require( '@stdlib/math/base/special/pow' );
+*
+* var out = new Float64Array( 2 );
+*
+* var v = normalize( out, 3.14e-319 );
+* // returns <Float64Array>[ 1.4141234400356668e-303, -52 ]
+*
+* var bool = ( v === out );
+* // returns true
+*
+* @example
+* var out = normalize( [ 0.0, 0 ], 0.0 );
+* // returns [ 0.0, 0 ]
+*
+* @example
+* var out = normalize( [ 0.0, 0 ], Infinity );
+* // returns [ Infinity, 0 ]
+*
+* @example
+* var out = normalize( [ 0.0, 0 ], -Infinity );
+* // returns [ -Infinity, 0 ]
+*
+* @example
+* var out = normalize( [ 0.0, 0 ], NaN );
+* // returns [ NaN, 0 ]
+*/
+function normalize( out, x ) {
+	if ( arguments.length === 1 ) {
+		return fcn( [ 0.0, 0 ], out );
+	}
+	return fcn( out, x );
+}
+
+
+// EXPORTS //
+
+module.exports = normalize;
+
+},{"./normalize.js":294}],294:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var FLOAT64_SMALLEST_NORMAL = require( '@stdlib/constants/math/float64-smallest-normal' );
+var isInfinite = require( '@stdlib/math/base/assert/is-infinite' );
+var isnan = require( '@stdlib/math/base/assert/is-nan' );
+var abs = require( '@stdlib/math/base/special/abs' );
+
+
+// VARIABLES //
+
+// (1<<52)
+var SCALAR = 4503599627370496;
+
+
+// MAIN //
+
+/**
+* Returns a normal number `y` and exponent `exp` satisfying \\(x = y \cdot 2^\mathrm{exp}\\).
+*
+* @private
+* @param {(Array|TypedArray|Object)} out - output array
+* @param {number} x - input value
+* @returns {(Array|TypedArray|Object)} output array
+*
+* @example
+* var pow = require( '@stdlib/math/base/special/pow' );
+*
+* var out = normalize( [ 0.0, 0 ], 3.14e-319 );
+* // returns [ 1.4141234400356668e-303, -52 ]
+*
+* var y = out[ 0 ];
+* var exp = out[ 1 ];
+*
+* var bool = ( y*pow(2.0,exp) === 3.14e-319 );
+* // returns true
+*
+* @example
+* var out = normalize( [ 0.0, 0 ], 0.0 );
+* // returns [ 0.0, 0 ];
+*
+* @example
+* var out = normalize( [ 0.0, 0 ], Infinity );
+* // returns [ Infinity, 0 ]
+*
+* @example
+* var out = normalize( [ 0.0, 0 ], -Infinity );
+* // returns [ -Infinity, 0 ]
+*
+* @example
+* var out = normalize( [ 0.0, 0 ], NaN );
+* // returns [ NaN, 0 ]
+*/
+function normalize( out, x ) {
+	if ( isnan( x ) || isInfinite( x ) ) {
+		out[ 0 ] = x;
+		out[ 1 ] = 0;
+		return out;
+	}
+	if ( x !== 0.0 && abs( x ) < FLOAT64_SMALLEST_NORMAL ) {
+		out[ 0 ] = x * SCALAR;
+		out[ 1 ] = -52;
+		return out;
+	}
+	out[ 0 ] = x;
+	out[ 1 ] = 0;
+	return out;
+}
+
+
+// EXPORTS //
+
+module.exports = normalize;
+
+},{"@stdlib/constants/math/float64-smallest-normal":217,"@stdlib/math/base/assert/is-infinite":229,"@stdlib/math/base/assert/is-nan":233,"@stdlib/math/base/special/abs":243}],295:[function(require,module,exports){
+module.exports=require(289)
+},{"@stdlib/assert/is-little-endian":143}],296:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Set the more significant 32 bits of a double-precision floating-point number.
+*
+* @module @stdlib/number/float64/base/set-high-word
+*
+* @example
+* var setHighWord = require( '@stdlib/number/float64/base/set-high-word' );
+*
+* var high = 5 >>> 0; // => 0 00000000000 00000000000000000101
+*
+* var y = setHighWord( 3.14e201, high ); // => 0 00000000000 0000000000000000010110010011110010110101100010000010
+* // returns 1.18350528745e-313
+*
+* @example
+* var setHighWord = require( '@stdlib/number/float64/base/set-high-word' );
+* var PINF = require( '@stdlib/constants/math/float64-pinf' ); //  => 0 11111111111 00000000000000000000 00000000000000000000000000000000
+*
+* var high = 1072693248 >>> 0; // => 0 01111111111 00000000000000000000
+*
+* // Set the higher order bits of `+infinity` to return `1`:
+* var y = setHighWord( PINF, high ); => 0 01111111111 0000000000000000000000000000000000000000000000000000
+* // returns 1.0
+*/
+
+// MODULES //
+
+var setHighWord = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = setHighWord;
+
+},{"./main.js":297}],297:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var Uint32Array = require( '@stdlib/array/uint32' );
+var Float64Array = require( '@stdlib/array/float64' );
+var HIGH = require( './high.js' );
+
+
+// VARIABLES //
+
+var FLOAT64_VIEW = new Float64Array( 1 );
+var UINT32_VIEW = new Uint32Array( FLOAT64_VIEW.buffer );
+
+
+// MAIN //
+
+/**
+* Sets the more significant 32 bits of a double-precision floating-point number.
+*
+* ## Notes
+*
+* ```text
+* float64 (64 bits)
+* f := fraction (significand/mantissa) (52 bits)
+* e := exponent (11 bits)
+* s := sign bit (1 bit)
+*
+* |-------- -------- -------- -------- -------- -------- -------- --------|
+* |                                Float64                                |
+* |-------- -------- -------- -------- -------- -------- -------- --------|
+* |              Uint32               |               Uint32              |
+* |-------- -------- -------- -------- -------- -------- -------- --------|
+* ```
+*
+* If little endian (more significant bits last):
+*
+* ```text
+*                         <-- lower      higher -->
+* |   f7       f6       f5       f4       f3       f2    e2 | f1 |s|  e1  |
+* ```
+*
+* If big endian (more significant bits first):
+*
+* ```text
+*                         <-- higher      lower -->
+* |s| e1    e2 | f1     f2       f3       f4       f5        f6      f7   |
+* ```
+*
+* In which Uint32 can we find the higher order bits? If little endian, the second; if big endian, the first.
+*
+*
+* ## References
+*
+* -   [Open Group][1]
+*
+* [1]: http://pubs.opengroup.org/onlinepubs/9629399/chap14.htm
+*
+* @param {number} x - double
+* @param {uinteger32} high - unsigned 32-bit integer to replace the higher order word of `x`
+* @returns {number} double having the same lower order word as `x`
+*
+* @example
+* var high = 5 >>> 0; // => 0 00000000000 00000000000000000101
+*
+* var y = setHighWord( 3.14e201, high ); //  => 0 00000000000 0000000000000000010110010011110010110101100010000010
+* // returns 1.18350528745e-313
+*
+* @example
+* var PINF = require( '@stdlib/constants/math/float64-pinf' ); // => 0 11111111111 00000000000000000000 00000000000000000000000000000000
+*
+* var high = 1072693248 >>> 0; // => 0 01111111111 00000000000000000000
+*
+* // Set the higher order bits of `+infinity` to return `1`:
+* var y = setHighWord( PINF, high ); // => 0 01111111111 0000000000000000000000000000000000000000000000000000
+* // returns 1.0
+*/
+function setHighWord( x, high ) {
+	FLOAT64_VIEW[ 0 ] = x;
+	UINT32_VIEW[ HIGH ] = ( high >>> 0 ); // identity bit shift to ensure integer
+	return FLOAT64_VIEW[ 0 ];
+}
+
+
+// EXPORTS //
+
+module.exports = setHighWord;
+
+},{"./high.js":295,"@stdlib/array/float64":30,"@stdlib/array/uint32":48}],298:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Set the less significant 32 bits of a double-precision floating-point number.
+*
+* @module @stdlib/number/float64/base/set-low-word
+*
+* @example
+* var setLowWord = require( '@stdlib/number/float64/base/set-low-word' );
+*
+* var low = 5 >>> 0; // => 00000000000000000000000000000101
+*
+* var x = 3.14e201; // => 0 11010011100 01001000001011000011 10010011110010110101100010000010
+*
+* var y = setLowWord( x, low ); // => 0 11010011100 01001000001011000011 00000000000000000000000000000101
+* // returns 3.139998651394392e+201
+*
+* @example
+* var setLowWord = require( '@stdlib/number/float64/base/set-low-word' );
+* var PINF = require( '@stdlib/constants/math/float64-pinf' );
+* var NINF = require( '@stdlib/constants/math/float64-ninf' );
+*
+* var low = 12345678;
+*
+* var y = setLowWord( PINF, low );
+* // returns NaN
+*
+* y = setLowWord( NINF, low );
+* // returns NaN
+*
+* y = setLowWord( NaN, low );
+* // returns NaN
+*/
+
+// MODULES //
+
+var setLowWord = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = setLowWord;
+
+},{"./main.js":300}],299:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isLittleEndian = require( '@stdlib/assert/is-little-endian' );
+
+
+// MAIN //
+
+var LOW;
+if ( isLittleEndian === true ) {
+	LOW = 0; // first index
+} else {
+	LOW = 1; // second index
+}
+
+
+// EXPORTS //
+
+module.exports = LOW;
+
+},{"@stdlib/assert/is-little-endian":143}],300:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var Uint32Array = require( '@stdlib/array/uint32' );
+var Float64Array = require( '@stdlib/array/float64' );
+var LOW = require( './low.js' );
+
+
+// VARIABLES //
+
+var FLOAT64_VIEW = new Float64Array( 1 );
+var UINT32_VIEW = new Uint32Array( FLOAT64_VIEW.buffer );
+
+
+// MAIN //
+
+/**
+* Sets the less significant 32 bits of a double-precision floating-point number.
+*
+* ## Notes
+*
+* ```text
+* float64 (64 bits)
+* f := fraction (significand/mantissa) (52 bits)
+* e := exponent (11 bits)
+* s := sign bit (1 bit)
+*
+* |-------- -------- -------- -------- -------- -------- -------- --------|
+* |                                Float64                                |
+* |-------- -------- -------- -------- -------- -------- -------- --------|
+* |              Uint32               |               Uint32              |
+* |-------- -------- -------- -------- -------- -------- -------- --------|
+* ```
+*
+* If little endian (more significant bits last):
+*
+* ```text
+*                         <-- lower      higher -->
+* |   f7       f6       f5       f4       f3       f2    e2 | f1 |s|  e1  |
+* ```
+*
+* If big endian (more significant bits first):
+*
+* ```text
+*                         <-- higher      lower -->
+* |s| e1    e2 | f1     f2       f3       f4       f5        f6      f7   |
+* ```
+*
+* In which Uint32 can we find the lower order bits? If little endian, the first; if big endian, the second.
+*
+*
+* ## References
+*
+* -   [Open Group][1]
+*
+* [1]: http://pubs.opengroup.org/onlinepubs/9629399/chap14.htm
+*
+* @param {number} x - double
+* @param {uinteger32} low - unsigned 32-bit integer to replace the lower order word of `x`
+* @returns {number} double having the same higher order word as `x`
+*
+* @example
+* var low = 5 >>> 0; // => 00000000000000000000000000000101
+*
+* var x = 3.14e201; // => 0 11010011100 01001000001011000011 10010011110010110101100010000010
+*
+* var y = setLowWord( x, low ); // => 0 11010011100 01001000001011000011 00000000000000000000000000000101
+* // returns 3.139998651394392e+201
+*
+* @example
+* var PINF = require( '@stdlib/constants/math/float64-pinf' );
+* var NINF = require( '@stdlib/constants/math/float64-ninf' );
+*
+* var low = 12345678;
+*
+* var y = setLowWord( PINF, low );
+* // returns NaN
+*
+* y = setLowWord( NINF, low );
+* // returns NaN
+*
+* y = setLowWord( NaN, low );
+* // returns NaN
+*/
+function setLowWord( x, low ) {
+	FLOAT64_VIEW[ 0 ] = x;
+	UINT32_VIEW[ LOW ] = ( low >>> 0 ); // identity bit shift to ensure integer
+	return FLOAT64_VIEW[ 0 ];
+}
+
+
+// EXPORTS //
+
+module.exports = setLowWord;
+
+},{"./low.js":299,"@stdlib/array/float64":30,"@stdlib/array/uint32":48}],301:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Split a double-precision floating-point number into a higher order word (unsigned 32-bit integer) and a lower order word (unsigned 32-bit integer).
+*
+* @module @stdlib/number/float64/base/to-words
+*
+* @example
+* var toWords = require( '@stdlib/number/float64/base/to-words' );
+*
+* var w = toWords( 3.14e201 );
+* // returns [ 1774486211, 2479577218 ]
+*
+* @example
+* var Uint32Array = require( '@stdlib/array/uint32' );
+* var toWords = require( '@stdlib/number/float64/base/to-words' );
+*
+* var out = new Uint32Array( 2 );
+*
+* var w = toWords( out, 3.14e201 );
+* // returns <Uint32Array>[ 1774486211, 2479577218 ]
+*
+* var bool = ( w === out );
+* // returns true
+*/
+
+// MODULES //
+
+var toWords = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = toWords;
+
+},{"./main.js":303}],302:[function(require,module,exports){
+module.exports=require(287)
+},{"@stdlib/assert/is-little-endian":143}],303:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var fcn = require( './to_words.js' );
+
+
+// MAIN //
+
+/**
+* Splits a double-precision floating-point number into a higher order word (unsigned 32-bit integer) and a lower order word (unsigned 32-bit integer).
+*
+* @param {(Array|TypedArray|Object)} [out] - output array
+* @param {number} x - input value
+* @returns {(Array|TypedArray|Object)} output array
+*
+* @example
+* var w = toWords( 3.14e201 );
+* // returns [ 1774486211, 2479577218 ]
+*
+* @example
+* var Uint32Array = require( '@stdlib/array/uint32' );
+*
+* var out = new Uint32Array( 2 );
+*
+* var w = toWords( out, 3.14e201 );
+* // returns <Uint32Array>[ 1774486211, 2479577218 ]
+*
+* var bool = ( w === out );
+* // returns true
+*/
+function toWords( out, x ) {
+	if ( arguments.length === 1 ) {
+		return fcn( [ 0, 0 ], out );
+	}
+	return fcn( out, x );
+}
+
+
+// EXPORTS //
+
+module.exports = toWords;
+
+},{"./to_words.js":304}],304:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var Uint32Array = require( '@stdlib/array/uint32' );
+var Float64Array = require( '@stdlib/array/float64' );
+var indices = require( './indices.js' );
+
+
+// VARIABLES //
+
+var FLOAT64_VIEW = new Float64Array( 1 );
+var UINT32_VIEW = new Uint32Array( FLOAT64_VIEW.buffer );
+
+var HIGH = indices.HIGH;
+var LOW = indices.LOW;
+
+
+// MAIN //
+
+/**
+* Splits a double-precision floating-point number into a higher order word (unsigned 32-bit integer) and a lower order word (unsigned 32-bit integer).
+*
+* ## Notes
+*
+* ```text
+* float64 (64 bits)
+* f := fraction (significand/mantissa) (52 bits)
+* e := exponent (11 bits)
+* s := sign bit (1 bit)
+*
+* |-------- -------- -------- -------- -------- -------- -------- --------|
+* |                                Float64                                |
+* |-------- -------- -------- -------- -------- -------- -------- --------|
+* |              Uint32               |               Uint32              |
+* |-------- -------- -------- -------- -------- -------- -------- --------|
+* ```
+*
+* If little endian (more significant bits last):
+*
+* ```text
+*                         <-- lower      higher -->
+* |   f7       f6       f5       f4       f3       f2    e2 | f1 |s|  e1  |
+* ```
+*
+* If big endian (more significant bits first):
+*
+* ```text
+*                         <-- higher      lower -->
+* |s| e1    e2 | f1     f2       f3       f4       f5        f6      f7   |
+* ```
+*
+* In which Uint32 can we find the higher order bits? If little endian, the second; if big endian, the first.
+*
+*
+* ## References
+*
+* -   [Open Group][1]
+*
+* [1]: http://pubs.opengroup.org/onlinepubs/9629399/chap14.htm
+*
+*
+* @private
+* @param {(Array|TypedArray|Object)} out - output array
+* @param {number} x - input value
+* @returns {(Array|TypedArray|Object)} output array
+*
+* @example
+* var Uint32Array = require( '@stdlib/array/uint32' );
+*
+* var out = new Uint32Array( 2 );
+*
+* var w = toWords( out, 3.14e201 );
+* // returns <Uint32Array>[ 1774486211, 2479577218 ]
+*
+* var bool = ( w === out );
+* // returns true
+*/
+function toWords( out, x ) {
+	FLOAT64_VIEW[ 0 ] = x;
+	out[ 0 ] = UINT32_VIEW[ HIGH ];
+	out[ 1 ] = UINT32_VIEW[ LOW ];
+	return out;
+}
+
+
+// EXPORTS //
+
+module.exports = toWords;
+
+},{"./indices.js":302,"@stdlib/array/float64":30,"@stdlib/array/uint32":48}],305:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Convert an unsigned 32-bit integer to a signed 32-bit integer.
+*
+* @module @stdlib/number/uint32/base/to-int32
+*
+* @example
+* var float64ToUint32 = require( '@stdlib/number/float64/base/to-uint32' );
+* var uint32ToInt32 = require( '@stdlib/number/uint32/base/to-int32' );
+*
+* var y = uint32ToInt32( float64ToUint32( 4294967295 ) );
+* // returns -1
+*
+* y = uint32ToInt32( float64ToUint32( 3 ) );
+* // returns 3
+*/
+
+// MODULES //
+
+var uint32ToInt32 = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = uint32ToInt32;
+
+},{"./main.js":306}],306:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+/**
+* Converts an unsigned 32-bit integer to a signed 32-bit integer.
+*
+* @param {uinteger32} x - unsigned 32-bit integer
+* @returns {integer32} signed 32-bit integer
+*
+* @example
+* var float64ToUint32 = require( '@stdlib/number/float64/base/to-uint32' );
+* var y = uint32ToInt32( float64ToUint32( 4294967295 ) );
+* // returns -1
+*
+* @example
+* var float64ToUint32 = require( '@stdlib/number/float64/base/to-uint32' );
+* var y = uint32ToInt32( float64ToUint32( 3 ) );
+* // returns 3
+*/
+function uint32ToInt32( x ) {
+	// NOTE: we could also use typed-arrays to achieve the same end.
+	return x|0; // asm type annotation
+}
+
+
+// EXPORTS //
+
+module.exports = uint32ToInt32;
+
+},{}],307:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var sample1 = require( './sample1.js' );
+var sample2 = require( './sample2.js' );
+var sample3 = require( './sample3.js' );
+
+
+// MAIN //
+
+/**
+* Returns a random number drawn from a beta distribution.
+*
+* @private
+* @param {PRNG} randu - pseudorandom number generator for uniformly distributed numbers
+* @param {PRNG} randn - pseudorandom number generator for normally distributed numbers
+* @param {PositiveNumber} alpha - first shape parameter
+* @param {PositiveNumber} beta - second shape parameter
+* @returns {Probability} pseudorandom number
+*/
+function sample( randu, randn, alpha, beta ) {
+	if ( alpha === beta && alpha > 1.5 ) {
+		return sample1( randu, randn, alpha );
+	}
+	if ( alpha > 1.0 && beta > 1.0 ) {
+		return sample2( randu, randn, alpha, beta );
+	}
+	return sample3( randu, alpha, beta );
+}
+
+
+// EXPORTS //
+
+module.exports = sample;
+
+},{"./sample1.js":311,"./sample2.js":312,"./sample3.js":313}],308:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var setReadOnlyAccessor = require( '@stdlib/utils/define-nonenumerable-read-only-accessor' );
+var setReadWriteAccessor = require( '@stdlib/utils/define-nonenumerable-read-write-accessor' );
+var isObject = require( '@stdlib/assert/is-plain-object' );
+var isBoolean = require( '@stdlib/assert/is-boolean' ).isPrimitive;
+var isFunction = require( '@stdlib/assert/is-function' );
+var hasOwnProp = require( '@stdlib/assert/has-own-property' );
+var constantFunction = require( '@stdlib/utils/constant-function' );
+var noop = require( '@stdlib/utils/noop' );
+var randn = require( '@stdlib/random/base/improved-ziggurat' ).factory;
+var randu = require( '@stdlib/random/base/mt19937' ).factory;
+var isnan = require( '@stdlib/math/base/assert/is-nan' );
+var gcopy = require( '@stdlib/blas/base/gcopy' );
+var Uint32Array = require( '@stdlib/array/uint32' );
+var isUint32Array = require( '@stdlib/assert/is-uint32array' );
+var copy = require( '@stdlib/utils/copy' );
+var typedarray2json = require( '@stdlib/array/to-json' );
+var validate = require( './validate.js' );
+var beta0 = require( './beta.js' );
+
+
+// MAIN //
+
+/**
+* Returns a pseudorandom number generator for generating beta distributed random numbers.
+*
+* @param {PositiveNumber} [alpha] - first shape parameter
+* @param {PositiveNumber} [beta] - second shape parameter
+* @param {Options} [options] - function options
+* @param {PRNG} [options.prng] - pseudorandom number generator which generates uniformly distributed pseudorandom numbers
+* @param {PRNGSeedMT19937} [options.seed] - pseudorandom number generator seed
+* @param {PRNGStateMT19937} [options.state] - pseudorandom number generator state
+* @param {boolean} [options.copy=true] - boolean indicating whether to copy a provided pseudorandom number generator state
+* @throws {TypeError} `alpha` must be a positive number
+* @throws {TypeError} `beta` must be a positive number
+* @throws {TypeError} options argument must be an object
+* @throws {TypeError} must provide valid options
+* @throws {Error} must provide a valid state
+* @returns {PRNG} pseudorandom number generator
+*
+* @example
+* var beta = factory( 2.0, 1.0 );
+* var v = beta();
+* // returns <number>
+*
+* @example
+* var beta = factory( 2.0, 2.0, {
+*     'seed': 297
+* });
+* var v = beta();
+* // returns <number>
+*/
+function factory() {
+	var STATE;
+	var rnorm;
+	var alpha;
+	var beta;
+	var opts;
+	var rand;
+	var prng;
+	var FLG;
+	var err;
+
+	FLG = true;
+	if ( arguments.length === 0 ) {
+		opts = {
+			'copy': false
+		};
+		rand = randu( opts );
+	} else if ( arguments.length === 1 ) {
+		opts = arguments[ 0 ];
+		if ( !isObject( opts ) ) {
+			throw new TypeError( 'invalid argument. Options argument must be an object. Value: `' + opts + '`.' );
+		}
+		if ( hasOwnProp( opts, 'copy' ) && !isBoolean( opts.copy ) ) {
+			throw new TypeError( 'invalid option. `copy` option must be a boolean. Option: `' + opts.copy + '`.' );
+		}
+		if ( hasOwnProp( opts, 'prng' ) ) {
+			if ( !isFunction( opts.prng ) ) {
+				throw new TypeError( 'invalid option. `prng` option must be a pseudorandom number generator function. Option: `' + opts.prng + '`.' );
+			}
+			rand = opts.prng;
+		} else {
+			if ( hasOwnProp( opts, 'state' ) && !isUint32Array( opts.state ) ) {
+				throw new TypeError( 'invalid option. `state` option must be a Uint32Array. Option: `' + opts.state + '`.' );
+			}
+			opts = copy( opts, 1 );
+			if ( opts.copy === false ) {
+				FLG = false;
+			} else if ( opts.state ) {
+				opts.state = gcopy( opts.state.length, opts.state, 1, new Uint32Array( opts.state.length ), 1 ); // eslint-disable-line max-len
+			}
+			opts.copy = false;
+			rand = randu( opts );
+		}
+	} else {
+		alpha = arguments[ 0 ];
+		beta = arguments[ 1 ];
+		err = validate( alpha, beta );
+		if ( err ) {
+			throw err;
+		}
+		if ( arguments.length > 2 ) {
+			opts = arguments[ 2 ];
+			if ( !isObject( opts ) ) {
+				throw new TypeError( 'invalid argument. Options argument must be an object. Value: `' + opts + '`.' );
+			}
+			if ( hasOwnProp( opts, 'copy' ) && !isBoolean( opts.copy ) ) {
+				throw new TypeError( 'invalid option. `copy` option must be a boolean. Option: `' + opts.copy + '`.' );
+			}
+			if ( hasOwnProp( opts, 'prng' ) ) {
+				if ( !isFunction( opts.prng ) ) {
+					throw new TypeError( 'invalid option. `prng` option must be a pseudorandom number generator function. Option: `' + opts.prng + '`.' );
+				}
+				rand = opts.prng;
+			} else {
+				if ( hasOwnProp( opts, 'state' ) && !isUint32Array( opts.state ) ) {
+					throw new TypeError( 'invalid option. `state` option must be a Uint32Array. Option: `' + opts.state + '`.' );
+				}
+				opts = copy( opts, 1 );
+				if ( opts.copy === false ) {
+					FLG = false;
+				} else if ( opts.state ) {
+					opts.state = gcopy( opts.state.length, opts.state, 1, new Uint32Array( opts.state.length ), 1 ); // eslint-disable-line max-len
+				}
+				opts.copy = false;
+				rand = randu( opts );
+			}
+		} else {
+			opts = {
+				'copy': false
+			};
+			rand = randu( opts );
+		}
+	}
+	if ( opts && opts.prng ) {
+		rnorm = randn({
+			'prng': opts.prng
+		});
+	} else {
+		if ( opts.state ) {
+			STATE = opts.state;
+		} else {
+			STATE = rand.state;
+			rand.state = STATE; // updates the underlying PRNG to point to a shared state
+		}
+		rnorm = randn({
+			'state': STATE,
+			'copy': false
+		});
+	}
+	if ( alpha === void 0 ) {
+		prng = beta2;
+	} else {
+		prng = beta1;
+	}
+	setReadOnly( prng, 'NAME', 'beta' );
+
+	// If we are provided an "external" PRNG, we don't support getting or setting PRNG state, as we'd need to check for compatible state value types, etc, entailing considerable complexity.
+	if ( opts && opts.prng ) {
+		setReadOnly( prng, 'seed', null );
+		setReadOnly( prng, 'seedLength', null );
+		setReadWriteAccessor( prng, 'state', constantFunction( null ), noop );
+		setReadOnly( prng, 'stateLength', null );
+		setReadOnly( prng, 'byteLength', null );
+		setReadOnly( prng, 'toJSON', constantFunction( null ) );
+		setReadOnly( prng, 'PRNG', rand );
+	} else {
+		setReadOnlyAccessor( prng, 'seed', getSeed );
+		setReadOnlyAccessor( prng, 'seedLength', getSeedLength );
+		setReadWriteAccessor( prng, 'state', getState, setState );
+		setReadOnlyAccessor( prng, 'stateLength', getStateLength );
+		setReadOnlyAccessor( prng, 'byteLength', getStateSize );
+		setReadOnly( prng, 'toJSON', toJSON );
+		setReadOnly( prng, 'PRNG', rand );
+		rand = rand.normalized;
+	}
+	return prng;
+
+	/**
+	* Returns the PRNG seed.
+	*
+	* @private
+	* @returns {PRNGSeedMT19937} seed
+	*/
+	function getSeed() {
+		return rand.seed;
+	}
+
+	/**
+	* Returns the PRNG seed length.
+	*
+	* @private
+	* @returns {PositiveInteger} seed length
+	*/
+	function getSeedLength() {
+		return rand.seedLength;
+	}
+
+	/**
+	* Returns the PRNG state length.
+	*
+	* @private
+	* @returns {PositiveInteger} state length
+	*/
+	function getStateLength() {
+		return rand.stateLength;
+	}
+
+	/**
+	* Returns the PRNG state size (in bytes).
+	*
+	* @private
+	* @returns {PositiveInteger} state size (in bytes)
+	*/
+	function getStateSize() {
+		return rand.byteLength;
+	}
+
+	/**
+	* Returns the current pseudorandom number generator state.
+	*
+	* @private
+	* @returns {PRNGStateMT19937} current state
+	*/
+	function getState() {
+		return rand.state;
+	}
+
+	/**
+	* Sets the pseudorandom number generator state.
+	*
+	* @private
+	* @param {PRNGStateMT19937} s - generator state
+	* @throws {TypeError} must provide a `Uint32Array`
+	* @throws {Error} must provide a valid state
+	*/
+	function setState( s ) {
+		if ( !isUint32Array( s ) ) {
+			throw new TypeError( 'invalid argument. Must provide a Uint32Array. Value: `' + s + '`.' );
+		}
+		if ( FLG ) {
+			s = gcopy( s.length, s, 1, new Uint32Array( s.length ), 1 );
+		}
+		rand.state = s;
+	}
+
+	/**
+	* Serializes the pseudorandom number generator as a JSON object.
+	*
+	* ## Notes
+	*
+	* -   `JSON.stringify()` implicitly calls this method when stringifying a PRNG.
+	*
+	* @private
+	* @returns {Object} JSON representation
+	*/
+	function toJSON() {
+		var out = {};
+		out.type = 'PRNG';
+		out.name = prng.NAME;
+		out.state = typedarray2json( rand.state );
+		if ( alpha === void 0 ) {
+			out.params = [];
+		} else {
+			out.params = [ alpha, beta ];
+		}
+		return out;
+	}
+
+	/**
+	* Returns a random number drawn from a beta distribution with bound parameter values.
+	*
+	* @private
+	* @returns {Probability} pseudorandom number
+	*
+	* @example
+	* var v = beta1();
+	* // returns <number>
+	*/
+	function beta1() {
+		return beta0( rand, rnorm, alpha, beta );
+	}
+
+	/**
+	* Returns a random number drawn from a beta distribution.
+	*
+	* @private
+	* @param {PositiveNumber} alpha - first shape parameter
+	* @param {PositiveNumber} beta - second shape parameter
+	* @returns {Probability} pseudorandom number
+	*
+	* @example
+	* var v = beta2( 2.0, 3.0 );
+	* // returns <number>
+	*/
+	function beta2( alpha, beta ) {
+		if (
+			isnan( alpha ) ||
+			isnan( beta ) ||
+			alpha <= 0.0 ||
+			beta <= 0.0
+		) {
+			return NaN;
+		}
+		return beta0( rand, rnorm, alpha, beta );
+	}
+}
+
+
+// EXPORTS //
+
+module.exports = factory;
+
+},{"./beta.js":307,"./validate.js":314,"@stdlib/array/to-json":42,"@stdlib/array/uint32":48,"@stdlib/assert/has-own-property":81,"@stdlib/assert/is-boolean":109,"@stdlib/assert/is-function":129,"@stdlib/assert/is-plain-object":163,"@stdlib/assert/is-uint32array":189,"@stdlib/blas/base/gcopy":197,"@stdlib/math/base/assert/is-nan":233,"@stdlib/random/base/improved-ziggurat":326,"@stdlib/random/base/mt19937":331,"@stdlib/utils/constant-function":341,"@stdlib/utils/copy":346,"@stdlib/utils/define-nonenumerable-read-only-accessor":348,"@stdlib/utils/define-nonenumerable-read-only-property":350,"@stdlib/utils/define-nonenumerable-read-write-accessor":352,"@stdlib/utils/noop":394}],309:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Beta distributed pseudorandom numbers.
+*
+* @module @stdlib/random/base/beta
+*
+* @example
+* var beta = require( '@stdlib/random/base/beta' );
+*
+* var v = beta( 2.0, 3.0 );
+* // returns <number>
+*
+* @example
+* var factory = require( '@stdlib/random/base/beta' ).factory;
+*
+* var beta = factory( 3.0, 2.0, {
+*     'seed': 297
+* });
+*
+* var v = beta();
+* // returns <number>
+*/
+
+// MODULES //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var beta = require( './main.js' );
+var factory = require( './factory.js' );
+
+
+// MAIN //
+
+setReadOnly( beta, 'factory', factory );
+
+
+// EXPORTS //
+
+module.exports = beta;
+
+},{"./factory.js":308,"./main.js":310,"@stdlib/utils/define-nonenumerable-read-only-property":350}],310:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var factory = require( './factory.js' );
+
+
+// MAIN //
+
+/**
+* Generates a beta distributed random number.
+*
+* ## References
+*
+* -   Ahrens, J.H., and U. Dieter. 1974. "Computer methods for sampling from gamma, beta, poisson and bionomial distributions." _Computing_ 12 (3): 223–46. doi:[10.1007/BF02293108](http://dx.doi.org/10.1007/BF02293108).
+* -   Jöhnk, M.D. 1964. "Erzeugung von Betaverteilten Und Gammaverteilten Zufallszahlen." _Metrika_ 8: 5–15. <http://eudml.org/doc/175224>.
+*
+* @name beta
+* @type {PRNG}
+* @param {PositiveNumber} alpha - first shape parameter
+* @param {PositiveNumber} beta - second shape parameter
+* @returns {Probability} pseudorandom number
+*
+* @example
+* var r = beta( 2.0, 5.0 );
+* // returns <number>
+*
+* @example
+* var r = beta( -2.0, 5.0 );
+* // returns NaN
+*/
+var beta = factory();
+
+
+// EXPORTS //
+
+module.exports = beta;
+
+},{"./factory.js":308}],311:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var pow = require( '@stdlib/math/base/special/pow' );
+var ln = require( '@stdlib/math/base/special/ln' );
+
+
+// MAIN //
+
+/**
+* Handles case where `alpha` and `beta` are equal and greater than `1.5`.
+*
+* @private
+* @param {PRNG} randu - PRNG for uniformly distributed numbers
+* @param {PRNG} randn - PRNG for normally distributed numbers
+* @param {PositiveNumber} alpha - first shape parameter
+* @returns {Probability} pseudorandom number
+*/
+function sample( randu, randn, alpha ) {
+	var flg;
+	var s4;
+	var A;
+	var s;
+	var t;
+	var u;
+	var x;
+	var y;
+
+	A = alpha - 1.0;
+	t = pow( A+A, 0.5 );
+
+	flg = true;
+	while ( flg === true ) {
+		s = randn();
+		x = 0.5 * ( 1.0+(s/t) );
+		if ( x >= 0.0 && x <= 1.0 ) {
+			u = randu();
+			s4 = pow( s, 4.0 );
+			y = (8.0*alpha) - 12.0;
+			y = 1.0 - (s4 / y);
+			if ( u <= y ) {
+				flg = false;
+			} else {
+				y += 0.5 * pow( s4/((8.0*alpha)-8.0), 2.0 );
+				if ( u < y ) {
+					y = A * ln( 4.0*x*(1.0-x) );
+					y += s*s / 2.0;
+					if ( y >= ln( u ) ) {
+						flg = false;
+					}
+				}
+			}
+		}
+	}
+	return x;
+}
+
+
+// EXPORTS //
+
+module.exports = sample;
+
+},{"@stdlib/math/base/special/ln":257,"@stdlib/math/base/special/pow":263}],312:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var pow = require( '@stdlib/math/base/special/pow' );
+var ln = require( '@stdlib/math/base/special/ln' );
+
+
+// MAIN //
+
+/**
+* Handles case where both `alpha` and `beta` are greater than `1.0`.
+*
+* @private
+* @param {PRNG} randu - PRNG for uniformly distributed numbers
+* @param {PRNG} randn - PRNG for normally distributed numbers
+* @param {PositiveNumber} alpha - first shape parameter
+* @param {PositiveNumber} beta - second shape parameter
+* @returns {Probability} pseudorandom number
+*/
+function sample( randu, randn, alpha, beta ) {
+	var sigma;
+	var flg;
+	var mu;
+	var A;
+	var B;
+	var C;
+	var L;
+	var s;
+	var u;
+	var x;
+	var y;
+
+	A = alpha - 1.0;
+	B = beta - 1.0;
+	C = A + B;
+	L = C * ln( C );
+	mu = A / C;
+	sigma = 0.5 / pow( C, 0.5 );
+
+	flg = true;
+	while ( flg === true ) {
+		s = randn();
+		x = mu + (s*sigma);
+		if ( x >= 0.0 && x <= 1.0 ) {
+			u = randu();
+			y = A * ln( x/A );
+			y += B * ln((1.0-x) / B);
+			y += L + (0.5*s*s);
+			if ( y >= ln( u ) ) {
+				flg = false;
+			}
+		}
+	}
+	return x;
+}
+
+
+// EXPORTS //
+
+module.exports = sample;
+
+},{"@stdlib/math/base/special/ln":257,"@stdlib/math/base/special/pow":263}],313:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var exp = require( '@stdlib/math/base/special/exp' );
+var pow = require( '@stdlib/math/base/special/pow' );
+var ln = require( '@stdlib/math/base/special/ln' );
+
+
+// MAIN //
+
+/**
+* Handles general case.
+*
+* @private
+* @param {PRNG} rand - PRNG for uniformly distributed numbers
+* @param {PositiveNumber} alpha - first shape parameter
+* @param {PositiveNumber} beta - second shape parameter
+* @returns {Probability} pseudorandom number
+*/
+function sample( rand, alpha, beta ) {
+	var lx;
+	var ly;
+	var xy;
+	var u;
+	var v;
+	var x;
+	var y;
+	while ( true ) {
+		u = rand();
+		v = rand();
+		x = pow( u, 1.0/alpha );
+		y = pow( v, 1.0/beta );
+		xy = x + y;
+		if ( xy <= 1.0 ) {
+			if ( xy > 0.0 ) {
+				return x / ( xy );
+			}
+			lx = ln( u ) / alpha;
+			ly = ln( v ) / beta;
+			if ( lx > ly ) {
+				ly -= lx;
+				lx = 0.0;
+			} else {
+				lx -= ly;
+				ly = 0.0;
+			}
+			return exp( lx - ln( exp(lx) + exp(ly) ) );
+		}
+	}
+}
+
+
+// EXPORTS //
+
+module.exports = sample;
+
+},{"@stdlib/math/base/special/exp":251,"@stdlib/math/base/special/ln":257,"@stdlib/math/base/special/pow":263}],314:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isPositive = require( '@stdlib/assert/is-positive-number' ).isPrimitive;
+
+
+// MAIN //
+
+/**
+* Validates parameters.
+*
+* @private
+* @param {PositiveNumber} alpha - first shape parameter
+* @param {PositiveNumber} beta - second shape parameter
+* @returns {(Error|null)} error or null
+*
+* @example
+* var err = validate( 1.0, 2.0 );
+* if ( err ) {
+*     throw err;
+* }
+*/
+function validate( alpha, beta ) {
+	if ( !isPositive( alpha ) ) {
+		return new TypeError( 'invalid argument. `alpha` must be a positive number. Value: `' + alpha + '`.' );
+	}
+	if ( !isPositive( beta ) ) {
+		return new TypeError( 'invalid argument. `beta` must be a positive number. Value: `' + beta + '`.' );
+	}
+	return null;
+}
+
+
+// EXPORTS //
+
+module.exports = validate;
+
+},{"@stdlib/assert/is-positive-number":169}],315:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var sample1 = require( './sample1.js' );
+var sample2 = require( './sample2.js' );
+
+
+// MAIN //
+
+/**
+* Returns a pseudorandom number drawn from a binomial distribution.
+*
+* @private
+* @param {PRNG} rand - PRNG for uniformly distributed numbers
+* @param {PositiveInteger} n - number of trials
+* @param {Probability} p - probability of success
+* @returns {NonNegativeInteger} pseudorandom number
+*/
+function sample( rand, n, p ) {
+	if ( p > 0.5 ) {
+		return n - sample( rand, n, 1.0-p );
+	}
+	if ( n*p < 10.0 ) {
+		return sample1( rand, n, p );
+	}
+	return sample2( rand, n, p );
+}
+
+
+// EXPORTS //
+
+module.exports = sample;
+
+},{"./sample1.js":320,"./sample2.js":321}],316:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var pow = require( '@stdlib/math/base/special/pow' );
+
+
+// VARIABLES //
+
+var ONE_12 = 1.0 / 12.0;
+var ONE_360 = 1.0 / 360.0;
+var ONE_1260 = 1.0 / 1260.0;
+
+
+// MAIN //
+
+/**
+* Returns a correction for Stirling's approximation.
+*
+* @private
+* @param {NonNegativeInteger} k - input argument
+* @returns {number} correction term
+*
+* @example
+* var c = correction( 0 );
+* // returns 0.08106146679532726
+*/
+function correction( k ) {
+	var v;
+	switch ( k ) {
+	case 0:
+		return 0.08106146679532726;
+	case 1:
+		return 0.04134069595540929;
+	case 2:
+		return 0.02767792568499834;
+	case 3:
+		return 0.02079067210376509;
+	case 4:
+		return 0.01664469118982119;
+	case 5:
+		return 0.01387612882307075;
+	case 6:
+		return 0.01189670994589177;
+	case 7:
+		return 0.01041126526197209;
+	case 8:
+		return 0.009255462182712733;
+	case 9:
+		return 0.008330563433362871;
+	default:
+		k += 1;
+		v = pow( k, 2 );
+		return (ONE_12 - ((ONE_360 - (ONE_1260/v)) / v)) / k;
+	}
+}
+
+
+// EXPORTS //
+
+module.exports = correction;
+
+},{"@stdlib/math/base/special/pow":263}],317:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var setReadOnlyAccessor = require( '@stdlib/utils/define-nonenumerable-read-only-accessor' );
+var setReadWriteAccessor = require( '@stdlib/utils/define-nonenumerable-read-write-accessor' );
+var isObject = require( '@stdlib/assert/is-plain-object' );
+var isFunction = require( '@stdlib/assert/is-function' );
+var hasOwnProp = require( '@stdlib/assert/has-own-property' );
+var constantFunction = require( '@stdlib/utils/constant-function' );
+var noop = require( '@stdlib/utils/noop' );
+var isnan = require( '@stdlib/math/base/assert/is-nan' );
+var isPositiveInteger = require( '@stdlib/math/base/assert/is-positive-integer' );
+var isProbability = require( '@stdlib/math/base/assert/is-probability' );
+var randu = require( '@stdlib/random/base/mt19937' ).factory;
+var typedarray2json = require( '@stdlib/array/to-json' );
+var validate = require( './validate.js' );
+var binomial0 = require( './binomial.js' );
+
+
+// MAIN //
+
+/**
+* Returns a pseudorandom number generator for generating binomially distributed random numbers.
+*
+* @param {PositiveInteger} [n] - number of trials
+* @param {Probability} [p] - success probability
+* @param {Options} [options] - function options
+* @param {PRNG} [options.prng] - pseudorandom number generator which generates uniformly distributed pseudorandom numbers
+* @param {PRNGSeedMT19937} [options.seed] - pseudorandom number generator seed
+* @param {PRNGStateMT19937} [options.state] - pseudorandom number generator state
+* @param {boolean} [options.copy=true] - boolean indicating whether to copy a provided pseudorandom number generator state
+* @throws {TypeError} `n` must be a positive integer
+* @throws {TypeError} `p` must be a probability
+* @throws {TypeError} options argument must be an object
+* @throws {TypeError} must provide valid options
+* @throws {Error} must provide a valid state
+* @returns {PRNG} pseudorandom number generator
+*
+* @example
+* var binomial = factory( 17, 0.5 );
+* var v = binomial();
+* // returns <number>
+*
+* @example
+* var binomial = factory( 8, 0.8, {
+*     'seed': 297
+* });
+* var v = binomial();
+* // returns <number>
+*
+* @example
+* var binomial = factory();
+* var v = binomial( 20, 0.5 );
+* // returns <number>
+*/
+function factory() {
+	var opts;
+	var rand;
+	var prng;
+	var err;
+	var n;
+	var p;
+
+	if ( arguments.length === 0 ) {
+		rand = randu();
+	} else if ( arguments.length === 1 ) {
+		opts = arguments[ 0 ];
+		if ( !isObject( opts ) ) {
+			throw new TypeError( 'invalid argument. Options argument must be an object. Value: `' + opts + '`.' );
+		}
+		if ( hasOwnProp( opts, 'prng' ) ) {
+			if ( !isFunction( opts.prng ) ) {
+				throw new TypeError( 'invalid option. `prng` option must be a pseudorandom number generator function. Option: `' + opts.prng + '`.' );
+			}
+			rand = opts.prng;
+		} else {
+			rand = randu( opts );
+		}
+	} else {
+		n = arguments[ 0 ];
+		p = arguments[ 1 ];
+		err = validate( n, p );
+		if ( err ) {
+			throw err;
+		}
+		if ( arguments.length > 2 ) {
+			opts = arguments[ 2 ];
+			if ( !isObject( opts ) ) {
+				throw new TypeError( 'invalid argument. Options argument must be an object. Value: `' + opts + '`.' );
+			}
+			if ( hasOwnProp( opts, 'prng' ) ) {
+				if ( !isFunction( opts.prng ) ) {
+					throw new TypeError( 'invalid option. `prng` option must be a pseudorandom number generator function. Option: `' + opts.prng + '`.' );
+				}
+				rand = opts.prng;
+			} else {
+				rand = randu( opts );
+			}
+		} else {
+			rand = randu();
+		}
+	}
+	if ( n === void 0 ) {
+		prng = binomial2;
+	}
+	else {
+		prng = binomial1;
+	}
+	setReadOnly( prng, 'NAME', 'binomial' );
+
+	// If we are provided an "external" PRNG, we don't support getting or setting PRNG state, as we'd need to check for compatible state value types, etc, entailing considerable complexity.
+	if ( opts && opts.prng ) {
+		setReadOnly( prng, 'seed', null );
+		setReadOnly( prng, 'seedLength', null );
+		setReadWriteAccessor( prng, 'state', constantFunction( null ), noop );
+		setReadOnly( prng, 'stateLength', null );
+		setReadOnly( prng, 'byteLength', null );
+		setReadOnly( prng, 'toJSON', constantFunction( null ) );
+		setReadOnly( prng, 'PRNG', rand );
+	} else {
+		setReadOnlyAccessor( prng, 'seed', getSeed );
+		setReadOnlyAccessor( prng, 'seedLength', getSeedLength );
+		setReadWriteAccessor( prng, 'state', getState, setState );
+		setReadOnlyAccessor( prng, 'stateLength', getStateLength );
+		setReadOnlyAccessor( prng, 'byteLength', getStateSize );
+		setReadOnly( prng, 'toJSON', toJSON );
+		setReadOnly( prng, 'PRNG', rand );
+		rand = rand.normalized;
+	}
+	return prng;
+
+	/**
+	* Returns the PRNG seed.
+	*
+	* @private
+	* @returns {PRNGSeedMT19937} seed
+	*/
+	function getSeed() {
+		return rand.seed;
+	}
+
+	/**
+	* Returns the PRNG seed length.
+	*
+	* @private
+	* @returns {PositiveInteger} seed length
+	*/
+	function getSeedLength() {
+		return rand.seedLength;
+	}
+
+	/**
+	* Returns the PRNG state length.
+	*
+	* @private
+	* @returns {PositiveInteger} state length
+	*/
+	function getStateLength() {
+		return rand.stateLength;
+	}
+
+	/**
+	* Returns the PRNG state size (in bytes).
+	*
+	* @private
+	* @returns {PositiveInteger} state size (in bytes)
+	*/
+	function getStateSize() {
+		return rand.byteLength;
+	}
+
+	/**
+	* Returns the current pseudorandom number generator state.
+	*
+	* @private
+	* @returns {PRNGStateMT19937} current state
+	*/
+	function getState() {
+		return rand.state;
+	}
+
+	/**
+	* Sets the pseudorandom number generator state.
+	*
+	* @private
+	* @param {PRNGStateMT19937} s - generator state
+	* @throws {Error} must provide a valid state
+	*/
+	function setState( s ) {
+		rand.state = s;
+	}
+
+	/**
+	* Serializes the pseudorandom number generator as a JSON object.
+	*
+	* ## Notes
+	*
+	* -   `JSON.stringify()` implicitly calls this method when stringifying a PRNG.
+	*
+	* @private
+	* @returns {Object} JSON representation
+	*/
+	function toJSON() {
+		var out = {};
+		out.type = 'PRNG';
+		out.name = prng.NAME;
+		out.state = typedarray2json( rand.state );
+		if ( n === void 0 ) {
+			out.params = [];
+		} else {
+			out.params = [ n, p ];
+		}
+		return out;
+	}
+
+	/**
+	* Returns a random number drawn from a binomial distribution with bound parameter values.
+	*
+	* @private
+	* @returns {NonNegativeInteger} pseudorandom number
+	*
+	* @example
+	* var r = binomial1();
+	* // returns <number>
+	*/
+	function binomial1() {
+		return binomial0( rand, n, p );
+	}
+
+	/**
+	* Returns a random number drawn from a binomial distribution.
+	*
+	* @private
+	* @param {PositiveInteger} n - number of trials
+	* @param {Probability} p - success probability
+	* @returns {NonNegativeInteger} pseudorandom number
+	*
+	* @example
+	* var r = binomial2( 20, 0.8 );
+	* // returns <number>
+	*/
+	function binomial2( n, p ) {
+		if (
+			isnan( n ) ||
+			isnan( p ) ||
+			!isPositiveInteger( n ) ||
+			!isProbability( p )
+		) {
+			return NaN;
+		}
+		return binomial0( rand, n, p );
+	}
+}
+
+
+// EXPORTS //
+
+module.exports = factory;
+
+},{"./binomial.js":315,"./validate.js":322,"@stdlib/array/to-json":42,"@stdlib/assert/has-own-property":81,"@stdlib/assert/is-function":129,"@stdlib/assert/is-plain-object":163,"@stdlib/math/base/assert/is-nan":233,"@stdlib/math/base/assert/is-positive-integer":237,"@stdlib/math/base/assert/is-probability":241,"@stdlib/random/base/mt19937":331,"@stdlib/utils/constant-function":341,"@stdlib/utils/define-nonenumerable-read-only-accessor":348,"@stdlib/utils/define-nonenumerable-read-only-property":350,"@stdlib/utils/define-nonenumerable-read-write-accessor":352,"@stdlib/utils/noop":394}],318:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Binomial distributed pseudorandom numbers.
+*
+* @module @stdlib/random/base/binomial
+*
+* @example
+* var binomial = require( '@stdlib/random/base/binomial' );
+*
+* var v = binomial( 20, 0.4 );
+* // returns <number>
+*
+* @example
+* var factory = require( '@stdlib/random/base/binomial' ).factory;
+*
+* var binomial = factory( 90, 0.8, {
+*     'seed': 297
+* });
+*
+* var v = binomial();
+* // returns <number>
+*/
+
+// MODULES //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var binomial = require( './main.js' );
+var factory = require( './factory.js' );
+
+
+// MAIN //
+
+setReadOnly( binomial, 'factory', factory );
+
+
+// EXPORTS //
+
+module.exports = binomial;
+
+},{"./factory.js":317,"./main.js":319,"@stdlib/utils/define-nonenumerable-read-only-property":350}],319:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var factory = require( './factory.js' );
+
+
+// MAIN //
+
+/**
+* Generates a binomially distributed random number.
+*
+* ## Method
+*
+* -   For \\(np < 10\\), the function generates Bernoulli random variates and returns their sum.
+* -   For \\(np \geq 10\\), the function uses the [BTRD algorithm][@hormann:1993a].
+*
+* ## References
+*
+* -   Hörmann, Wolfgang. 1993. "The generation of binomial random variates." _Journal of Statistical Computation and Simulation_ 46 (1-2): 101–10. doi:[10.1080/00949659308811496][@hormann:1993a].
+*
+* [@hormann:1993a]: http://dx.doi.org/10.1080/00949659308811496
+*
+* @name binomial
+* @type {PRNG}
+* @param {PositiveInteger} n - number of trials
+* @param {Probability} p - success probability
+* @throws {TypeError} `n` must be a positive integer
+* @throws {TypeError} `p` must be a probability
+* @returns {NonNegativeInteger} pseudorandom number
+*
+* @example
+* var r = binomial( 20, 0.8 );
+* // returns <number>
+*/
+var binomial = factory();
+
+
+// EXPORTS //
+
+module.exports = binomial;
+
+},{"./factory.js":317}],320:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Generates a binomially distributed pseudorandom number by computing the sum of Bernoulli random variables.
+*
+* @private
+* @param {PRNG} rand - PRNG for uniformly distributed numbers
+* @param {PositiveInteger} n - number of trials
+* @param {Probability} p - success probability
+* @returns {NonNegativeInteger} pseudorandom number
+*/
+function sample( rand, n, p ) {
+	var sum = 0;
+	var i;
+	for ( i = 0; i < n; i++ ) {
+		if ( rand() <= p ) {
+			sum += 1;
+		}
+	}
+	return sum;
+}
+
+
+// EXPORTS //
+
+module.exports = sample;
+
+},{}],321:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var floor = require( '@stdlib/math/base/special/floor' );
+var sign = require( '@stdlib/math/base/special/signum' );
+var sqrt = require( '@stdlib/math/base/special/sqrt' );
+var abs = require( '@stdlib/math/base/special/abs' );
+var ln = require( '@stdlib/math/base/special/ln' );
+var correction = require( './correction.js' );
+
+
+// VARIABLES //
+
+var ONE_SIXTH = 1.0 / 6.0;
+
+
+// MAIN //
+
+/**
+* Generates a binomially distributed pseudorandom number.
+*
+* ## References
+*
+* -   Hörmann, Wolfgang. 1993. "The generation of binomial random variates." _Journal of Statistical Computation and Simulation_ 46 (1-2): 101–10. doi:[10.1080/00949659308811496][@hormann:1993a].
+*
+* [@hormann:1993a]: http://dx.doi.org/10.1080/00949659308811496
+*
+* @private
+* @param {PRNG} rand - PRNG for uniformly distributed numbers
+* @param {PositiveInteger} n - number of trials
+* @param {Probability} p - success probability
+* @returns {NonNegativeInteger} pseudorandom number
+*/
+function sample( rand, n, p ) {
+	var alpha;
+	var urvr;
+	var snpq;
+	var npq;
+	var rho;
+	var tmp;
+	var nm;
+	var nr;
+	var us;
+	var km;
+	var nk;
+	var vr;
+	var a;
+	var b;
+	var c;
+	var f;
+	var h;
+	var i;
+	var k;
+	var m;
+	var q;
+	var r;
+	var t;
+	var u;
+	var v;
+	var x;
+
+	m = floor( (n + 1) * p );
+	nm = n - m + 1;
+
+	q = 1.0 - p;
+
+	r = p / q;
+	nr = (n + 1) * r;
+
+	npq = n * p * q;
+	snpq = sqrt( npq );
+
+	b = 1.15 + (2.53 * snpq);
+	a = -0.0873 + (0.0248*b) + (0.01*p);
+	c = (n*p) + 0.5;
+
+	alpha = (2.83 + (5.1/b)) * snpq;
+
+	vr = 0.92 - (4.2/b);
+	urvr = 0.86 * vr;
+
+	h = (m + 0.5) * ln( (m+1) / (r*nm) );
+	h += correction( m ) + correction( n-m );
+
+	while ( true ) {
+		v = rand();
+		if ( v <= urvr ) {
+			u = (v/vr) - 0.43;
+			r = (u * ( (2.0*a / (0.5 - abs(u))) + b )) + c;
+			return floor( r );
+		}
+		if ( v >= vr ) {
+			u = rand() - 0.5;
+		} else {
+			u = (v/vr) - 0.93;
+			u = (sign( u ) * 0.5) - u;
+			v = vr * rand();
+		}
+		us = 0.5 - abs(u);
+		k = floor( (u * ( (2.0*a/us) + b )) + c );
+		if ( k < 0 || k > n ) {
+			// Try again...
+			continue;
+		}
+		v = v * alpha / ( (a/(us*us)) + b );
+		km = abs( k - m );
+		if ( km > 15 ) {
+			v = ln( v );
+			rho = km / npq;
+			tmp = ( (km/3) + 0.625 ) * km;
+			tmp += ONE_SIXTH;
+			tmp /= npq;
+			rho *= tmp + 0.5;
+			t = -(km * km) / (2.0 * npq);
+			if ( v < t - rho ) {
+				return k;
+			}
+			if ( v <= t + rho ) {
+				nk = n - k + 1;
+				x = h + ( (n+1)*ln( nm/nk ) );
+				x += (k+0.5) * ln( nk*r/(k+1) );
+				x += -(correction( k ) + correction( n-k ));
+				if ( v <= x ) {
+					return k;
+				}
+			}
+		} else {
+			f = 1.0;
+			if ( m < k ) {
+				for ( i = m; i <= k; i++ ) {
+					f *= (nr/i) - r;
+				}
+			} else if ( m > k ) {
+				for ( i = k; i <= m; i++ ) {
+					v *= (nr/i) - r;
+				}
+			}
+			if ( v <= f ) {
+				return k;
+			}
+		}
+	}
+}
+
+
+// EXPORTS //
+
+module.exports = sample;
+
+},{"./correction.js":316,"@stdlib/math/base/special/abs":243,"@stdlib/math/base/special/floor":253,"@stdlib/math/base/special/ln":257,"@stdlib/math/base/special/signum":274,"@stdlib/math/base/special/sqrt":276}],322:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isPositiveInteger = require( '@stdlib/assert/is-positive-integer' ).isPrimitive;
+var isProbability = require( '@stdlib/assert/is-probability' ).isPrimitive;
+
+
+// MAIN //
+
+/**
+* Validates parameters.
+*
+* @private
+* @param {PositiveInteger} n - number of trials
+* @param {Probability} p - success probability
+* @returns {(Error|null)} error or null
+*
+* @example
+* var err = validate( 10, 0.5 );
+* if ( err ) {
+*     throw err;
+* }
+*/
+function validate( n, p ) {
+	if ( !isPositiveInteger( n ) ) {
+		return new TypeError( 'invalid argument. First argument must be a positive integer. Value: `' + p + '`.' );
+	}
+	if ( !isProbability( p ) ) {
+		return new TypeError( 'invalid argument. Second argument must be a probability. Value: `' + p + '`.' );
+	}
+	return null;
+}
+
+
+// EXPORTS //
+
+module.exports = validate;
+
+},{"@stdlib/assert/is-positive-integer":165,"@stdlib/assert/is-probability":173}],323:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var sqrt = require( '@stdlib/math/base/special/sqrt' );
+var exp = require( '@stdlib/math/base/special/exp' );
+var ln = require( '@stdlib/math/base/special/ln' );
+
+
+// VARIABLES //
+
+// (R*phi(R) + Pr(X>=R))*sqrt(2\pi)
+var V = 9.91256303526217e-3;
+
+
+// MAIN //
+
+/**
+* Returns an array containing coordinates such that each rectangle has the same area.
+*
+* @private
+* @param {PositiveInteger} N - number of rectangles
+* @param {number} rTail - start of right tail
+* @returns {NumberArray} coordinate array
+*
+* @example
+* var X = coordsArray( 128, 3.44 );
+* // returns <Array>
+*/
+function coordsArray( N, rTail ) {
+	var X;
+	var f;
+	var i;
+
+	f = exp( -0.5 * rTail * rTail );
+
+	X = [];
+	X.push( V/f ); // bottom block: V / f(R)
+	X.push( rTail );
+	for ( i = 2; i < N; i++ ) {
+		X[ i ] = sqrt( -2.0 * ln( ( V/X[i-1] ) + f ) );
+		f = exp( -0.5 * X[ i ] * X[ i ] );
+	}
+	X.push( 0.0 );
+	return X;
+}
+
+
+// EXPORTS //
+
+module.exports = coordsArray;
+
+},{"@stdlib/math/base/special/exp":251,"@stdlib/math/base/special/ln":257,"@stdlib/math/base/special/sqrt":276}],324:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var setReadOnlyAccessor = require( '@stdlib/utils/define-nonenumerable-read-only-accessor' );
+var setReadWriteAccessor = require( '@stdlib/utils/define-nonenumerable-read-write-accessor' );
+var isFunction = require( '@stdlib/assert/is-function' );
+var isObject = require( '@stdlib/assert/is-plain-object' );
+var isBoolean = require( '@stdlib/assert/is-boolean' ).isPrimitive;
+var hasOwnProp = require( '@stdlib/assert/has-own-property' );
+var isUint32Array = require( '@stdlib/assert/is-uint32array' );
+var mt19937 = require( '@stdlib/random/base/mt19937' ).factory;
+var constantFunction = require( '@stdlib/utils/constant-function' );
+var noop = require( '@stdlib/utils/noop' );
+var floor = require( '@stdlib/math/base/special/floor' );
+var UINT32_MAX = require( '@stdlib/constants/math/uint32-max' );
+var typedarray2json = require( '@stdlib/array/to-json' );
+var improvedZiggurat = require( './improved_ziggurat.js' );
+
+
+// MAIN //
+
+/**
+* Returns a pseudorandom number generator which implements the improved Ziggurat method to generate normally distributed pseudorandom numbers.
+*
+* @param {Options} [options] - function options
+* @param {PRNG} [options.prng] - pseudorandom number generator which generates uniformly distributed pseudorandom numbers
+* @param {PRNGSeedMT19937} [options.seed] - pseudorandom number generator seed
+* @param {PRNGStateMT19937} [options.state] - pseudorandom number generator state
+* @param {boolean} [options.copy=true] - boolean indicating whether to copy a provided pseudorandom number generator state
+* @throws {TypeError} must provide an object
+* @throws {TypeError} must provide valid options
+* @throws {Error} must provide a valid state
+* @returns {PRNG} pseudorandom number generator
+*
+* @example
+* var randn = factory();
+*
+* var r = randn();
+* // returns <number>
+*
+* @example
+* // Return a seeded PRNG:
+* var randn = factory({
+*     'seed': 12345
+* });
+*
+* var r = randn();
+* // returns <number>
+*/
+function factory( options ) {
+	var randu;
+	var randi;
+	var randn;
+	var opts;
+
+	opts = {
+		'copy': true
+	};
+	if ( arguments.length ) {
+		if ( !isObject( options ) ) {
+			throw new TypeError( 'invalid argument. Must provide an object. Value: `' + options + '`.' );
+		}
+		if ( hasOwnProp( options, 'copy' ) ) {
+			opts.copy = options.copy;
+			if ( !isBoolean( options.copy ) ) {
+				throw new TypeError( 'invalid option. `copy` option must be a boolean. Option: `' + options.copy + '`.' );
+			}
+		}
+		if ( hasOwnProp( options, 'prng' ) ) {
+			if ( !isFunction( options.prng ) ) {
+				throw new TypeError( 'invalid option. `prng` option must be a pseudorandom number generator function. Option: `' + options.prng + '`.' );
+			}
+			randu = options.prng;
+		}
+		// If provided a PRNG, ignore the `state` option, as we don't support getting or setting PRNG state.
+		else if ( hasOwnProp( options, 'state' ) ) {
+			opts.state = options.state;
+			if ( !isUint32Array( options.state ) ) {
+				throw new TypeError( 'invalid option. `state` option must be a Uint32Array. Option: `' + options.state + '`.' );
+			}
+		}
+		// If provided a PRNG, ignore the `seed` option, as a `seed`, by itself, is insufficient to guarantee reproducibility. If provided a state, ignore the `seed` option, as a PRNG state should contain seed information.
+		else if ( hasOwnProp( options, 'seed' ) ) {
+			opts.seed = options.seed;
+			if ( options.seed === void 0 ) {
+				throw new TypeError( 'invalid option. `seed` option must be either a positive integer less than or equal to the maximum unsigned 32-bit integer or an array-like object containing integer values less than or equal to the maximum unsigned 32-bit integer. Option: `' + options.seed + '`.' );
+			}
+		}
+	}
+	if ( opts.state === void 0 ) {
+		if ( randu === void 0 ) {
+			randi = mt19937( opts );
+			randu = randi.normalized;
+		} else {
+			randi = mt19937({
+				'seed': floor( 1.0 + ( UINT32_MAX*randu() ) ), // allows seeding via an externally seeded PRNG
+				'copy': opts.copy
+			});
+			opts.seed = null;
+		}
+	} else {
+		randi = mt19937( opts );
+		randu = randi.normalized;
+	}
+	randn = improvedZiggurat( randu, randi );
+
+	setReadOnly( randn, 'NAME', 'improved-ziggurat' );
+	if ( opts.seed === null ) {
+		setReadOnly( randn, 'seed', null );
+		setReadOnly( randn, 'seedLength', null );
+	} else {
+		setReadOnlyAccessor( randn, 'seed', getSeed );
+		setReadOnlyAccessor( randn, 'seedLength', getSeedLength );
+	}
+	// If we are provided an "external" PRNG, we don't support getting or setting PRNG state, as we'd need to check for compatible state value types, etc, entailing considerable complexity.
+	if ( options && options.prng ) {
+		setReadWriteAccessor( randn, 'state', constantFunction( null ), noop );
+		setReadOnly( randn, 'stateLength', null );
+		setReadOnly( randn, 'byteLength', null );
+		setReadOnly( randn, 'toJSON', constantFunction( null ) );
+	} else {
+		setReadWriteAccessor( randn, 'state', getState, setState );
+		setReadOnlyAccessor( randn, 'stateLength', getStateLength );
+		setReadOnlyAccessor( randn, 'byteLength', getStateSize );
+		setReadOnly( randn, 'toJSON', toJSON );
+	}
+	setReadOnly( randn, 'PRNG', randu );
+
+	return randn;
+
+	/**
+	* Returns the PRNG seed.
+	*
+	* @private
+	* @returns {PRNGSeedMT19937} seed
+	*/
+	function getSeed() {
+		return randi.seed;
+	}
+
+	/**
+	* Returns the PRNG seed length.
+	*
+	* @private
+	* @returns {PositiveInteger} seed length
+	*/
+	function getSeedLength() {
+		return randi.seedLength;
+	}
+
+	/**
+	* Returns the PRNG state length.
+	*
+	* @private
+	* @returns {PositiveInteger} state length
+	*/
+	function getStateLength() {
+		return randi.stateLength;
+	}
+
+	/**
+	* Returns the PRNG state size (in bytes).
+	*
+	* @private
+	* @returns {PositiveInteger} state size (in bytes)
+	*/
+	function getStateSize() {
+		return randi.byteLength;
+	}
+
+	/**
+	* Returns the current PRNG state.
+	*
+	* @private
+	* @returns {PRNGStateMT19937} current state
+	*/
+	function getState() {
+		return randi.state;
+	}
+
+	/**
+	* Sets the PRNG state.
+	*
+	* @private
+	* @param {PRNGStateMT19937} s - generator state
+	* @throws {Error} must provide a valid state
+	*/
+	function setState( s ) {
+		randi.state = s;
+	}
+
+	/**
+	* Serializes the pseudorandom number generator as a JSON object.
+	*
+	* ## Notes
+	*
+	* -   `JSON.stringify()` implicitly calls this method when stringifying a PRNG.
+	*
+	* @private
+	* @returns {Object} JSON representation
+	*/
+	function toJSON() {
+		var out = {};
+		out.type = 'PRNG';
+		out.name = randn.NAME;
+		out.state = typedarray2json( randi.state );
+		out.params = [];
+		return out;
+	}
+}
+
+
+// EXPORTS //
+
+module.exports = factory;
+
+},{"./improved_ziggurat.js":325,"@stdlib/array/to-json":42,"@stdlib/assert/has-own-property":81,"@stdlib/assert/is-boolean":109,"@stdlib/assert/is-function":129,"@stdlib/assert/is-plain-object":163,"@stdlib/assert/is-uint32array":189,"@stdlib/constants/math/uint32-max":225,"@stdlib/math/base/special/floor":253,"@stdlib/random/base/mt19937":331,"@stdlib/utils/constant-function":341,"@stdlib/utils/define-nonenumerable-read-only-accessor":348,"@stdlib/utils/define-nonenumerable-read-only-property":350,"@stdlib/utils/define-nonenumerable-read-write-accessor":352,"@stdlib/utils/noop":394}],325:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var abs = require( '@stdlib/math/base/special/abs' );
+var exp = require( '@stdlib/math/base/special/exp' );
+var coordsArray = require( './coords_array.js' );
+var ratioArray = require( './ratio_array.js' );
+var sampleTail = require( './sample_tail.js' );
+
+
+// VARIABLES //
+
+// Number of blocks:
+var NUM_BLOCKS = 128;
+
+// Start of right tail (R):
+var START_RIGHT_TAIL = 3.442619855899;
+
+// `X` holds coordinates, such that each rectangle has same area:
+var X = coordsArray( NUM_BLOCKS, START_RIGHT_TAIL );
+
+// `R` holds `X[ i+1 ] / X[ i ]`:
+var R = ratioArray( X );
+
+// 127 => 0x7F => 00000000000000000000000001111111
+var LAST_7_BITS_MASK = 127|0; // asm type annotation
+
+
+// MAIN //
+
+/**
+* Returns a pseudorandom number generator which implements the improved Ziggurat algorithm for generating normally distributed pseudorandom numbers.
+*
+* @private
+* @param {PRNG} randu - PRNG for generating uniformly distributed numbers
+* @param {PRNG} randi - PRNG for generating uniformly distributed integers
+* @returns {number} pseudorandom number
+*/
+function wrap( randu, randi ) {
+	return randn;
+
+	/**
+	* Generates a normally distributed pseudorandom number.
+	*
+	* @private
+	* @returns {number} pseudorandom number
+	*
+	* @example
+	* var r = randn();
+	* // returns <number>
+	*/
+	function randn() {
+		var f0;
+		var f1;
+		var x2;
+		var x;
+		var u;
+		var i;
+		var j;
+		while ( true ) {
+			u = ( 2.0*randu() ) - 1.0;
+			i = randi() & LAST_7_BITS_MASK;
+
+			// First try the rectangular boxes...
+			if ( abs( u ) < R[ i ] ) {
+				return u * X[ i ];
+			}
+			// If bottom box, sample from the tail...
+			if ( i === 0 ) {
+				return sampleTail( randu, START_RIGHT_TAIL, u < 0.0 );
+			}
+			// Is this a sample from the wedges?
+			x = u * X[ i ];
+			x2 = x * x;
+			j = i + 1;
+			f0 = exp( -0.5 * ( (X[ i ]*X[ i ]) - x2 ) );
+			f1 = exp( -0.5 * ( (X[ j ]*X[ j ]) - x2 ) );
+			if ( f1 + (randu()*(f0-f1)) < 1.0 ) {
+				return x;
+			}
+		}
+	}
+}
+
+
+// EXPORTS //
+
+module.exports = wrap;
+
+},{"./coords_array.js":323,"./ratio_array.js":328,"./sample_tail.js":329,"@stdlib/math/base/special/abs":243,"@stdlib/math/base/special/exp":251}],326:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Normally distributed pseudorandom numbers using the improved Ziggurat method.
+*
+* @module @stdlib/random/base/improved-ziggurat
+*
+* @example
+* var randn = require( '@stdlib/random/base/improved-ziggurat' );
+*
+* var r = randn();
+* // returns <number>
+*
+* @example
+* var factory = require( '@stdlib/random/base/improved-ziggurat' ).factory;
+*
+* var randn = factory({
+*     'seed': 12345
+* });
+*
+* var r = randn();
+* // returns <number>
+*/
+
+// MODULES //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var randn = require( './main.js' );
+var factory = require( './factory.js' );
+
+
+// MAIN //
+
+setReadOnly( randn, 'factory', factory );
+
+
+// EXPORTS //
+
+module.exports = randn;
+
+},{"./factory.js":324,"./main.js":327,"@stdlib/utils/define-nonenumerable-read-only-property":350}],327:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var factory = require( './factory.js' );
+
+
+// MAIN //
+
+/**
+* Generates a standard normally distributed random number.
+*
+* ## Method
+*
+* The basic Ziggurat method works as follows:
+*
+*
+*     ```tex
+*     x_{C-1}(r) \left[ f(0) - f\left( x_{C-1}(r) \right) \right] - V(r) = 0
+*     ```
+*
+*     where
+*
+*     ```tex
+*     V(r) = r \; f(r) + \int_r^\infty \; f(x) \; dx
+*     ```
+*
+*     and \\( r \\) denotes the right-most \\( x_1 \\).
+*
+* -   We then use the following rejection algorithm:
+*
+*     -   Draw a box \\( B_i \\) at random with probability \\( \tfrac{1}{C} \\).
+*     -   Draw a random number from the box as \\( z = U_0 x_i \\) for \\( i > 0 \\) and \\( z = U_0 V / f(x_1) \\).
+*     -   If \\( z < x_{i+1} \\), accept \\( z \\).
+*     -   If \\( i = 0 \\), accept a \\( v \\) by transforming the tail of the normal distribution to the unit interval and then use rejection technique by Marsaglia, G. (1964) to generate a standard normal variable. Otherwise, if \\( i > 0 \\) and \\( U_1 \left[ f(x_i) - f(x_{i+1})\right] < f(z) - f(x_{i+1}) \\) accept \\( z \\).
+*     -   Go back to the first step.
+*
+* -   The improved version by Doornik (2005) changes step four in order to correct a deficiency of the original Ziggurat algorithm. The updated version requires the generation of two random numbers, a uniform variable drawn from \\( U(-1,1) \\) and the last seven bits of a random integer.
+*
+* ## References
+*
+* -   Doornik, Jurgen A. 2005. "An Improved Ziggurat Method to Generate Normal Random Samples." <https://www.doornik.com/research/ziggurat.pdf>.
+* -   Marsaglia, George, and Wai Wan Tsang. 2000. "The Ziggurat Method for Generating Random Variables." _Journal of Statistical Software_ 5 (1): 1–7. doi:[10.18637/jss.v005.i08](http://dx.doi.org/10.18637/jss.v005.i08).
+* -   Marsaglia, George. 1964. "Generating a Variable from the Tail of the Normal Distribution." _Technometrics_ 6 (1): 101–2. doi:[10.1080/00401706.1964.10490150](http://dx.doi.org/10.1080/00401706.1964.10490150).
+*
+*
+* @name randn
+* @type {PRNG}
+* @returns {number} pseudorandom number
+*
+* @example
+* var r = randn();
+* // returns <number>
+*/
+var randn = factory();
+
+
+// EXPORTS //
+
+module.exports = randn;
+
+},{"./factory.js":324}],328:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+/**
+* Returns an array containing the ratio of each pair of consecutive elements in order: `X[ i+1 ] / X[ i ]`.
+*
+* @private
+* @param {NumberArray} X - input array
+* @returns {NumberArray} ratio array
+*
+* @example
+* var R = ratioArray( [ 1.0, 2.0, 5.0 ] );
+* // returns [ 2.0, 2.5 ]
+*/
+function ratioArray( X ) {
+	var R;
+	var i;
+
+	R = [];
+	for ( i = 0; i < X.length-1; i++ ) {
+		R.push( X[ i+1 ] / X[ i ] );
+	}
+	return R;
+}
+
+
+// EXPORTS //
+
+module.exports = ratioArray;
+
+},{}],329:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var ln = require( '@stdlib/math/base/special/ln' );
+
+
+// MAIN //
+
+/**
+* Transforms the tail of the normal distribution to the unit interval and then uses rejection technique to generate standard normal variable.
+*
+* ## References
+*
+* -   Marsaglia, George. 1964. "Generating a Variable from the Tail of the Normal Distribution." _Technometrics_ 6 (1): 101–2. doi:[10.1080/00401706.1964.10490150](http://dx.doi.org/10.1080/00401706.1964.10490150).
+*
+* @private
+* @param {PRNG} rand - pseudorandom number generator
+* @param {number} rTail - start value of the right tail
+* @param {boolean} isNegative - boolean indicating which side to evaluate
+* @returns {number} standard normal variable
+*/
+function sampleTail( rand, rTail, isNegative ) {
+	var x;
+	var y;
+	do {
+		x = ln( rand() ) / rTail;
+		y = ln( rand() );
+	} while ( -2.0*y < x*x );
+	return ( isNegative ) ? x-rTail : rTail-x;
+}
+
+
+// EXPORTS //
+
+module.exports = sampleTail;
+
+},{"@stdlib/math/base/special/ln":257}],330:[function(require,module,exports){
+/* eslint-disable max-lines, max-len */
+
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*
+*
+* ## Notice
+*
+* The original C code and copyright notice are from the [source implementation]{@link http://www.math.sci.hiroshima-u.ac.jp/~m-mat/MT/MT2002/CODES/mt19937ar.c}. The implementation has been modified for JavaScript.
+*
+* ```text
+* Copyright (C) 1997 - 2002, Makoto Matsumoto and Takuji Nishimura,
+* All rights reserved.
+*
+* Redistribution and use in source and binary forms, with or without
+* modification, are permitted provided that the following conditions
+* are met:
+*
+*   1. Redistributions of source code must retain the above copyright
+*      notice, this list of conditions and the following disclaimer.
+*
+*   2. Redistributions in binary form must reproduce the above copyright
+*      notice, this list of conditions and the following disclaimer in the
+*      documentation and/or other materials provided with the distribution.
+*
+*   3. The names of its contributors may not be used to endorse or promote
+*      products derived from this software without specific prior written
+*      permission.
+*
+* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+* A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+* CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+* EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+* PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+* PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+* LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+* ```
+*/
+
+'use strict';
+
+// MODULES //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var setReadOnlyAccessor = require( '@stdlib/utils/define-nonenumerable-read-only-accessor' );
+var setReadWriteAccessor = require( '@stdlib/utils/define-nonenumerable-read-write-accessor' );
+var hasOwnProp = require( '@stdlib/assert/has-own-property' );
+var isObject = require( '@stdlib/assert/is-plain-object' );
+var isCollection = require( '@stdlib/assert/is-collection' );
+var isUint32Array = require( '@stdlib/assert/is-uint32array' );
+var isBoolean = require( '@stdlib/assert/is-boolean' ).isPrimitive;
+var isPositiveInteger = require( '@stdlib/assert/is-positive-integer' ).isPrimitive;
+var FLOAT64_MAX_SAFE_INTEGER = require( '@stdlib/constants/math/float64-max-safe-integer' );
+var UINT32_MAX = require( '@stdlib/constants/math/uint32-max' );
+var Uint32Array = require( '@stdlib/array/uint32' );
+var max = require( '@stdlib/math/base/special/max' );
+var uimul = require( '@stdlib/math/base/special/uimul' );
+var gcopy = require( '@stdlib/blas/base/gcopy' );
+var typedarray2json = require( '@stdlib/array/to-json' );
+var randuint32 = require( './rand_uint32.js' );
+
+
+// VARIABLES //
+
+// Define the size of the state array (see refs):
+var N = 624;
+
+// Define a (magic) constant used for indexing into the state array:
+var M = 397;
+
+// Define the maximum seed: 11111111111111111111111111111111
+var MAX_SEED = UINT32_MAX >>> 0; // asm type annotation
+
+// For seed arrays, define an initial state (magic) constant: 19650218 => 00000001001010111101011010101010
+var SEED_ARRAY_INIT_STATE = 19650218 >>> 0; // asm type annotation
+
+// Define a mask for the most significant `w-r` bits, where `w` is the word size (32 bits) and `r` is the separation point of one word (see refs): 2147483648 => 0x80000000 => 10000000000000000000000000000000
+var UPPER_MASK = 0x80000000 >>> 0; // asm type annotation
+
+// Define a mask for the least significant `r` bits (see refs): 2147483647 => 0x7fffffff => 01111111111111111111111111111111
+var LOWER_MASK = 0x7fffffff >>> 0; // asm type annotation
+
+// Define a multiplier (see Knuth TAOCP Vol2. 3rd Ed. P.106): 1812433253 => 01101100000001111000100101100101
+var KNUTH_MULTIPLIER = 1812433253 >>> 0; // asm type annotation
+
+// Define a (magic) multiplier: 1664525 => 00000000000110010110011000001101
+var MAGIC_MULTIPLIER_1 = 1664525 >>> 0; // asm type annotation
+
+// Define a (magic) multiplier: 1566083941 => 01011101010110001000101101100101
+var MAGIC_MULTIPLIER_2 = 1566083941 >>> 0; // asm type annotation
+
+// Define a tempering coefficient: 2636928640 => 0x9d2c5680 => 10011101001011000101011010000000
+var TEMPERING_COEFFICIENT_1 = 0x9d2c5680 >>> 0; // asm type annotation
+
+// Define a tempering coefficient: 4022730752 => 0xefc60000 => 11101111110001100000000000000000
+var TEMPERING_COEFFICIENT_2 = 0xefc60000 >>> 0; // asm type annotation
+
+// Define a constant vector `a` (see refs): 2567483615 => 0x9908b0df => 10011001000010001011000011011111
+var MATRIX_A = 0x9908b0df >>> 0; // asm type annotation
+
+// MAG01[x] = x * MATRIX_A; for x = {0,1}
+var MAG01 = [ 0x0 >>> 0, MATRIX_A >>> 0 ]; // asm type annotation
+
+// Define a normalization constant when generating double-precision floating-point numbers: 2^53 => 9007199254740992
+var FLOAT64_NORMALIZATION_CONSTANT = 1.0 / ( FLOAT64_MAX_SAFE_INTEGER+1.0 ); // eslint-disable-line id-length
+
+// 2^26: 67108864
+var TWO_26 = 67108864 >>> 0; // asm type annotation
+
+// 2^32: 2147483648 => 0x80000000 => 10000000000000000000000000000000
+var TWO_32 = 0x80000000 >>> 0; // asm type annotation
+
+// 1 (as a 32-bit unsigned integer): 1 => 0x1 => 00000000000000000000000000000001
+var ONE = 0x1 >>> 0; // asm type annotation
+
+// Define the maximum normalized pseudorandom double-precision floating-point number: ( (((2^32-1)>>>5)*2^26)+( (2^32-1)>>>6) ) / 2^53
+var MAX_NORMALIZED = FLOAT64_MAX_SAFE_INTEGER * FLOAT64_NORMALIZATION_CONSTANT;
+
+// Define the state array schema version:
+var STATE_ARRAY_VERSION = 1; // NOTE: anytime the state array schema changes, this value should be incremented!!!
+
+// Define the number of sections in the state array:
+var NUM_STATE_SECTIONS = 3; // state, other, seed
+
+// Define the index offset of the "state" section in the state array:
+var STATE_SECTION_OFFSET = 2; // | version | num_sections | state_length | ...state | other_length | state_index | seed_length | ...seed |
+
+// Define the index offset of the "other" section in the state array:
+var OTHER_SECTION_OFFSET = N + 3; // | version | num_sections | state_length | ...state | other_length | state_index | seed_length | ...seed |
+
+// Define the index offset of the seed section in the state array:
+var SEED_SECTION_OFFSET = N + 5; // | version | num_sections | state_length | ...state | other_length | state_index | seed_length | ...seed |
+
+// Define the length of the "fixed" length portion of the state array:
+var STATE_FIXED_LENGTH = N + 6; // 1 (version) + 1 (num_sections) + 1 (state_length) + N (state) + 1 (other_length) + 1 (state_index) + 1 (seed_length)
+
+
+// FUNCTIONS //
+
+/**
+* Verifies state array integrity.
+*
+* @private
+* @param {Uint32Array} state - state array
+* @param {boolean} FLG - flag indicating whether the state array was provided as an option (true) or an argument (false)
+* @returns {(Error|null)} an error or `null`
+*/
+function verifyState( state, FLG ) {
+	var s1;
+	if ( FLG ) {
+		s1 = 'option';
+	} else {
+		s1 = 'argument';
+	}
+	// The state array must have a minimum length...
+	if ( state.length < STATE_FIXED_LENGTH+1 ) {
+		return new RangeError( 'invalid '+s1+'. `state` array has insufficient length.' );
+	}
+	// The first element of the state array must equal the supported state array schema version...
+	if ( state[ 0 ] !== STATE_ARRAY_VERSION ) {
+		return new RangeError( 'invalid '+s1+'. `state` array has an incompatible schema version. Expected: '+STATE_ARRAY_VERSION+'. Actual: '+state[ 0 ]+'.' );
+	}
+	// The second element of the state array must contain the number of sections...
+	if ( state[ 1 ] !== NUM_STATE_SECTIONS ) {
+		return new RangeError( 'invalid '+s1+'. `state` array has an incompatible number of sections. Expected: '+NUM_STATE_SECTIONS+'. Actual: '+state[ 1 ]+'.' );
+	}
+	// The length of the "state" section must equal `N`...
+	if ( state[ STATE_SECTION_OFFSET ] !== N ) {
+		return new RangeError( 'invalid '+s1+'. `state` array has an incompatible state length. Expected: '+N+'. Actual: '+state[ STATE_SECTION_OFFSET ]+'.' );
+	}
+	// The length of the "other" section must equal `1`...
+	if ( state[ OTHER_SECTION_OFFSET ] !== 1 ) {
+		return new RangeError( 'invalid '+s1+'. `state` array has an incompatible section length. Expected: '+(1).toString()+'. Actual: '+state[ OTHER_SECTION_OFFSET ]+'.' );
+	}
+	// The length of the "seed" section much match the empirical length...
+	if ( state[ SEED_SECTION_OFFSET ] !== state.length-STATE_FIXED_LENGTH ) {
+		return new RangeError( 'invalid '+s1+'. `state` array length is incompatible with seed section length. Expected: '+(state.length-STATE_FIXED_LENGTH)+'. Actual: '+state[ SEED_SECTION_OFFSET ]+'.' );
+	}
+	return null;
+}
+
+/**
+* Returns an initial PRNG state.
+*
+* @private
+* @param {Uint32Array} state - state array
+* @param {PositiveInteger} N - state size
+* @param {uinteger32} s - seed
+* @returns {Uint32Array} state array
+*/
+function createState( state, N, s ) {
+	var i;
+
+	// Set the first element of the state array to the provided seed:
+	state[ 0 ] = s >>> 0; // equivalent to `s & 0xffffffffUL` in original C implementation
+
+	// Initialize the remaining state array elements:
+	for ( i = 1; i < N; i++ ) {
+		/*
+		* In the original C implementation (see `init_genrand()`),
+		*
+		* ```c
+		* mt[i] = (KNUTH_MULTIPLIER * (mt[i-1] ^ (mt[i-1] >> 30)) + i)
+		* ```
+		*
+		* In order to replicate this in JavaScript, we must emulate C-like multiplication of unsigned 32-bit integers.
+		*/
+		s = state[ i-1 ]>>>0; // asm type annotation
+		s = ( s^(s>>>30) )>>>0; // asm type annotation
+		state[ i ] = ( uimul( s, KNUTH_MULTIPLIER ) + i )>>>0; // asm type annotation
+	}
+	return state;
+}
+
+/**
+* Initializes a PRNG state array according to a seed array.
+*
+* @private
+* @param {Uint32Array} state - state array
+* @param {NonNegativeInteger} N - state array length
+* @param {Collection} seed - seed array
+* @param {NonNegativeInteger} M - seed array length
+* @returns {Uint32Array} state array
+*/
+function initState( state, N, seed, M ) {
+	var s;
+	var i;
+	var j;
+	var k;
+
+	i = 1;
+	j = 0;
+	for ( k = max( N, M ); k > 0; k-- ) {
+		/*
+		* In the original C implementation (see `init_by_array()`),
+		*
+		* ```c
+		* mt[i] = (mt[i]^((mt[i-1]^(mt[i-1]>>30))*1664525UL)) + seed[j] + j;
+		* ```
+		*
+		* In order to replicate this in JavaScript, we must emulate C-like multiplication of unsigned 32-bit integers.
+		*/
+		s = state[ i-1 ]>>>0; // asm type annotation
+		s = ( s^(s>>>30) )>>>0; // asm type annotation
+		s = ( uimul( s, MAGIC_MULTIPLIER_1 ) )>>>0; // asm type annotation
+		state[ i ] = ( ((state[i]>>>0)^s) + seed[j] + j )>>>0; /* non-linear */ // asm type annotation
+
+		i += 1;
+		j += 1;
+		if ( i >= N ) {
+			state[ 0 ] = state[ N-1 ];
+			i = 1;
+		}
+		if ( j >= M ) {
+			j = 0;
+		}
+	}
+	for ( k = N-1; k > 0; k-- ) {
+		/*
+		* In the original C implementation (see `init_by_array()`),
+		*
+		* ```c
+		* mt[i] = (mt[i]^((mt[i-1]^(mt[i-1]>>30))*1566083941UL)) - i;
+		* ```
+		*
+		* In order to replicate this in JavaScript, we must emulate C-like multiplication of unsigned 32-bit integers.
+		*/
+		s = state[ i-1 ]>>>0; // asm type annotation
+		s = ( s^(s>>>30) )>>>0; // asm type annotation
+		s = ( uimul( s, MAGIC_MULTIPLIER_2 ) )>>>0; // asm type annotation
+		state[ i ] = ( ((state[i]>>>0)^s) - i )>>>0; /* non-linear */ // asm type annotation
+
+		i += 1;
+		if ( i >= N ) {
+			state[ 0 ] = state[ N-1 ];
+			i = 1;
+		}
+	}
+	// Ensure a non-zero initial state array:
+	state[ 0 ] = TWO_32; // MSB (most significant bit) is 1
+
+	return state;
+}
+
+/**
+* Updates a PRNG's internal state by generating the next `N` words.
+*
+* @private
+* @param {Uint32Array} state - state array
+* @returns {Uint32Array} state array
+*/
+function twist( state ) {
+	var w;
+	var i;
+	var j;
+	var k;
+
+	k = N - M;
+	for ( i = 0; i < k; i++ ) {
+		w = ( state[i]&UPPER_MASK ) | ( state[i+1]&LOWER_MASK );
+		state[ i ] = state[ i+M ] ^ ( w>>>1 ) ^ MAG01[ w&ONE ];
+	}
+	j = N - 1;
+	for ( ; i < j; i++ ) {
+		w = ( state[i]&UPPER_MASK ) | ( state[i+1]&LOWER_MASK );
+		state[ i ] = state[ i-k ] ^ ( w>>>1 ) ^ MAG01[ w&ONE ];
+	}
+	w = ( state[j]&UPPER_MASK ) | ( state[0]&LOWER_MASK );
+	state[ j ] = state[ M-1 ] ^ ( w>>>1 ) ^ MAG01[ w&ONE ];
+	return state;
+}
+
+
+// MAIN //
+
+/**
+* Returns a 32-bit Mersenne Twister pseudorandom number generator.
+*
+* ## Notes
+*
+* -   In contrast to the original C implementation, array seeds of length `1` are considered integer seeds. This ensures that the seed `[ 1234 ]` generates the same output as the seed `1234`. In the original C implementation, the two seeds would yield different output, which is **not** obvious from a user perspective.
+*
+* @param {Options} [options] - options
+* @param {PRNGSeedMT19937} [options.seed] - pseudorandom number generator seed
+* @param {PRNGStateMT19937} [options.state] - pseudorandom number generator state
+* @param {boolean} [options.copy=true] - boolean indicating whether to copy a provided pseudorandom number generator state
+* @throws {TypeError} options argument must be an object
+* @throws {TypeError} a seed must be either a positive integer less than or equal to the maximum unsigned 32-bit integer or an array-like object containing integers less than or equal to the maximum unsigned 32-bit integer
+* @throws {RangeError} a numeric seed must be a positive integer less than or equal to the maximum unsigned 32-bit integer
+* @throws {TypeError} state must be a `Uint32Array`
+* @throws {Error} must provide a valid state
+* @throws {TypeError} `copy` option must be a boolean
+* @returns {PRNG} Mersenne Twister PRNG
+*
+* @example
+* var mt19937 = factory();
+*
+* var v = mt19937();
+* // returns <number>
+*
+* @example
+* // Return a seeded Mersenne Twister PRNG:
+* var mt19937 = factory({
+*     'seed': 1234
+* });
+*
+* var v = mt19937();
+* // returns 822569775
+*/
+function factory( options ) {
+	var STATE;
+	var state;
+	var opts;
+	var seed;
+	var slen;
+	var err;
+
+	opts = {};
+	if ( arguments.length ) {
+		if ( !isObject( options ) ) {
+			throw new TypeError( 'invalid argument. Options argument must be an object. Value: `' + options + '`.' );
+		}
+		if ( hasOwnProp( options, 'copy' ) ) {
+			opts.copy = options.copy;
+			if ( !isBoolean( options.copy ) ) {
+				throw new TypeError( 'invalid option. `copy` option must be a boolean. Option: `' + options.copy + '`.' );
+			}
+		}
+		if ( hasOwnProp( options, 'state' ) ) {
+			state = options.state;
+			opts.state = true;
+			if ( !isUint32Array( state ) ) {
+				throw new TypeError( 'invalid option. `state` option must be a Uint32Array. Option: `' + state + '`.' );
+			}
+			err = verifyState( state, true );
+			if ( err ) {
+				throw err;
+			}
+			if ( opts.copy === false ) {
+				STATE = state;
+			} else {
+				STATE = new Uint32Array( state.length );
+				gcopy( state.length, state, 1, STATE, 1 );
+			}
+			// Create a state "view":
+			state = new Uint32Array( STATE.buffer, STATE.byteOffset+((STATE_SECTION_OFFSET+1)*STATE.BYTES_PER_ELEMENT), N );
+
+			// Create a seed "view":
+			seed = new Uint32Array( STATE.buffer, STATE.byteOffset+((SEED_SECTION_OFFSET+1)*STATE.BYTES_PER_ELEMENT), state[ SEED_SECTION_OFFSET ] );
+		}
+		// If provided a PRNG state, we ignore the `seed` option...
+		if ( seed === void 0 ) {
+			if ( hasOwnProp( options, 'seed' ) ) {
+				seed = options.seed;
+				opts.seed = true;
+				if ( isPositiveInteger( seed ) ) {
+					if ( seed > MAX_SEED ) {
+						throw new RangeError( 'invalid option. `seed` option must be a positive integer less than or equal to the maximum unsigned 32-bit integer. Option: `' + seed + '`.' );
+					}
+					seed >>>= 0; // asm type annotation
+				} else if ( isCollection( seed ) === false || seed.length < 1 ) {
+					throw new TypeError( 'invalid option. `seed` option must be either a positive integer less than or equal to the maximum unsigned 32-bit integer or an array-like object containing integer values less than or equal to the maximum unsigned 32-bit integer. Option: `' + seed + '`.' );
+				} else if ( seed.length === 1 ) {
+					seed = seed[ 0 ];
+					if ( !isPositiveInteger( seed ) ) {
+						throw new TypeError( 'invalid option. `seed` option must be either a positive integer less than or equal to the maximum unsigned 32-bit integer or an array-like object containing integer values less than or equal to the maximum unsigned 32-bit integer. Option: `' + seed + '`.' );
+					}
+					if ( seed > MAX_SEED ) {
+						throw new RangeError( 'invalid option. `seed` option must be either a positive integer less than or equal to the maximum unsigned 32-bit integer or an array-like object containing integer values less than or equal to the maximum unsigned 32-bit integer. Option: `' + seed + '`.' );
+					}
+					seed >>>= 0; // asm type annotation
+				} else {
+					slen = seed.length;
+					STATE = new Uint32Array( STATE_FIXED_LENGTH+slen );
+
+					// Initialize sections:
+					STATE[ 0 ] = STATE_ARRAY_VERSION;
+					STATE[ 1 ] = NUM_STATE_SECTIONS;
+					STATE[ STATE_SECTION_OFFSET ] = N;
+					STATE[ OTHER_SECTION_OFFSET ] = 1;
+					STATE[ OTHER_SECTION_OFFSET+1 ] = N; // state index
+					STATE[ SEED_SECTION_OFFSET ] = slen;
+
+					// Copy the provided seed array to prevent external mutation, as mutation would lead to an inability to reproduce PRNG values according to the PRNG's stated seed:
+					gcopy.ndarray( slen, seed, 1, 0, STATE, 1, SEED_SECTION_OFFSET+1 );
+
+					// Create a state "view":
+					state = new Uint32Array( STATE.buffer, STATE.byteOffset+((STATE_SECTION_OFFSET+1)*STATE.BYTES_PER_ELEMENT), N );
+
+					// Create a seed "view":
+					seed = new Uint32Array( STATE.buffer, STATE.byteOffset+((SEED_SECTION_OFFSET+1)*STATE.BYTES_PER_ELEMENT), slen );
+
+					// Initialize the internal PRNG state:
+					state = createState( state, N, SEED_ARRAY_INIT_STATE );
+					state = initState( state, N, seed, slen );
+				}
+			} else {
+				seed = randuint32() >>> 0; // asm type annotation
+			}
+		}
+	} else {
+		seed = randuint32() >>> 0; // asm type annotation
+	}
+	if ( state === void 0 ) {
+		STATE = new Uint32Array( STATE_FIXED_LENGTH+1 );
+
+		// Initialize sections:
+		STATE[ 0 ] = STATE_ARRAY_VERSION;
+		STATE[ 1 ] = NUM_STATE_SECTIONS;
+		STATE[ STATE_SECTION_OFFSET ] = N;
+		STATE[ OTHER_SECTION_OFFSET ] = 1;
+		STATE[ OTHER_SECTION_OFFSET+1 ] = N; // state index
+		STATE[ SEED_SECTION_OFFSET ] = 1;
+		STATE[ SEED_SECTION_OFFSET+1 ] = seed;
+
+		// Create a state "view":
+		state = new Uint32Array( STATE.buffer, STATE.byteOffset+((STATE_SECTION_OFFSET+1)*STATE.BYTES_PER_ELEMENT), N );
+
+		// Create a seed "view":
+		seed = new Uint32Array( STATE.buffer, STATE.byteOffset+((SEED_SECTION_OFFSET+1)*STATE.BYTES_PER_ELEMENT), 1 );
+
+		// Initialize the internal PRNG state:
+		state = createState( state, N, seed );
+	}
+	// Note: property order matters in order to maintain consistency of PRNG "shape" (hidden classes).
+	setReadOnly( mt19937, 'NAME', 'mt19937' );
+	setReadOnlyAccessor( mt19937, 'seed', getSeed );
+	setReadOnlyAccessor( mt19937, 'seedLength', getSeedLength );
+	setReadWriteAccessor( mt19937, 'state', getState, setState );
+	setReadOnlyAccessor( mt19937, 'stateLength', getStateLength );
+	setReadOnlyAccessor( mt19937, 'byteLength', getStateSize );
+	setReadOnly( mt19937, 'toJSON', toJSON );
+	setReadOnly( mt19937, 'MIN', 1 );
+	setReadOnly( mt19937, 'MAX', UINT32_MAX );
+	setReadOnly( mt19937, 'normalized', normalized );
+
+	setReadOnly( normalized, 'NAME', mt19937.NAME );
+	setReadOnlyAccessor( normalized, 'seed', getSeed );
+	setReadOnlyAccessor( normalized, 'seedLength', getSeedLength );
+	setReadWriteAccessor( normalized, 'state', getState, setState );
+	setReadOnlyAccessor( normalized, 'stateLength', getStateLength );
+	setReadOnlyAccessor( normalized, 'byteLength', getStateSize );
+	setReadOnly( normalized, 'toJSON', toJSON );
+	setReadOnly( normalized, 'MIN', 0.0 );
+	setReadOnly( normalized, 'MAX', MAX_NORMALIZED );
+
+	return mt19937;
+
+	/**
+	* Returns the PRNG seed.
+	*
+	* @private
+	* @returns {PRNGSeedMT19937} seed
+	*/
+	function getSeed() {
+		var len = STATE[ SEED_SECTION_OFFSET ];
+		return gcopy( len, seed, 1, new Uint32Array( len ), 1 );
+	}
+
+	/**
+	* Returns the PRNG seed length.
+	*
+	* @private
+	* @returns {PositiveInteger} seed length
+	*/
+	function getSeedLength() {
+		return STATE[ SEED_SECTION_OFFSET ];
+	}
+
+	/**
+	* Returns the PRNG state length.
+	*
+	* @private
+	* @returns {PositiveInteger} state length
+	*/
+	function getStateLength() {
+		return STATE.length;
+	}
+
+	/**
+	* Returns the PRNG state size (in bytes).
+	*
+	* @private
+	* @returns {PositiveInteger} state size (in bytes)
+	*/
+	function getStateSize() {
+		return STATE.byteLength;
+	}
+
+	/**
+	* Returns the current PRNG state.
+	*
+	* ## Notes
+	*
+	* -   The PRNG state array is comprised of a preamble followed by `3` sections:
+	*
+	*     0.  preamble (version + number of sections)
+	*     1.  internal PRNG state
+	*     2.  auxiliary state information
+	*     3.  PRNG seed
+	*
+	* -   The first element of the PRNG state array preamble is the state array schema version.
+	*
+	* -   The second element of the PRNG state array preamble is the number of state array sections (i.e., `3`).
+	*
+	* -   The first element of each section following the preamble specifies the section length. The remaining section elements comprise the section contents.
+	*
+	* @private
+	* @returns {PRNGStateMT19937} current state
+	*/
+	function getState() {
+		var len = STATE.length;
+		return gcopy( len, STATE, 1, new Uint32Array( len ), 1 );
+	}
+
+	/**
+	* Sets the PRNG state.
+	*
+	* ## Notes
+	*
+	* -   If PRNG state is "shared" (meaning a state array was provided during PRNG creation and **not** copied) and one sets the generator state to a state array having a different length, the PRNG does **not** update the existing shared state and, instead, points to the newly provided state array. In order to synchronize PRNG output according to the new shared state array, the state array for **each** relevant PRNG must be **explicitly** set.
+	* -   If PRNG state is "shared" and one sets the generator state to a state array of the same length, the PRNG state is updated (along with the state of all other PRNGs sharing the PRNG's state array).
+	*
+	* @private
+	* @param {PRNGStateMT19937} s - generator state
+	* @throws {TypeError} must provide a `Uint32Array`
+	* @throws {Error} must provide a valid state
+	*/
+	function setState( s ) {
+		var err;
+		if ( !isUint32Array( s ) ) {
+			throw new TypeError( 'invalid argument. Must provide a Uint32Array. Value: `' + s + '`.' );
+		}
+		err = verifyState( s, false );
+		if ( err ) {
+			throw err;
+		}
+		if ( opts.copy === false ) {
+			if ( opts.state && s.length === STATE.length ) {
+				gcopy( s.length, s, 1, STATE, 1 ); // update current shared state
+			} else {
+				STATE = s; // point to new shared state
+				opts.state = true; // setting this flag allows updating a shared state even if a state array was not provided at PRNG creation
+			}
+		} else {
+			// Check if we can reuse allocated memory...
+			if ( s.length !== STATE.length ) {
+				STATE = new Uint32Array( s.length ); // reallocate
+			}
+			gcopy( s.length, s, 1, STATE, 1 );
+		}
+		// Create a new state "view":
+		state = new Uint32Array( STATE.buffer, STATE.byteOffset+((STATE_SECTION_OFFSET+1)*STATE.BYTES_PER_ELEMENT), N );
+
+		// Create a new seed "view":
+		seed = new Uint32Array( STATE.buffer, STATE.byteOffset+((SEED_SECTION_OFFSET+1)*STATE.BYTES_PER_ELEMENT), STATE[ SEED_SECTION_OFFSET ] );
+	}
+
+	/**
+	* Serializes the pseudorandom number generator as a JSON object.
+	*
+	* ## Notes
+	*
+	* -   `JSON.stringify()` implicitly calls this method when stringifying a PRNG.
+	*
+	* @private
+	* @returns {Object} JSON representation
+	*/
+	function toJSON() {
+		var out = {};
+		out.type = 'PRNG';
+		out.name = mt19937.NAME;
+		out.state = typedarray2json( STATE );
+		out.params = [];
+		return out;
+	}
+
+	/**
+	* Generates a pseudorandom integer on the interval \\( [1,2^{32}-1) \\).
+	*
+	* @private
+	* @returns {uinteger32} pseudorandom integer
+	*
+	* @example
+	* var r = mt19937();
+	* // returns <number>
+	*/
+	function mt19937() {
+		var r;
+		var i;
+
+		// Retrieve the current state index:
+		i = STATE[ OTHER_SECTION_OFFSET+1 ];
+
+		// Determine whether we need to update the PRNG state:
+		if ( i >= N ) {
+			state = twist( state );
+			i = 0;
+		}
+		// Get the next word of "raw"/untempered state:
+		r = state[ i ];
+
+		// Update the state index:
+		STATE[ OTHER_SECTION_OFFSET+1 ] = i + 1;
+
+		// Tempering transform to compensate for the reduced dimensionality of equidistribution:
+		r ^= r >>> 11;
+		r ^= ( r << 7 ) & TEMPERING_COEFFICIENT_1;
+		r ^= ( r << 15 ) & TEMPERING_COEFFICIENT_2;
+		r ^= r >>> 18;
+
+		return r >>> 0;
+	}
+
+	/**
+	* Generates a pseudorandom number on the interval \\( [0,1) \\).
+	*
+	* ## Notes
+	*
+	* -   The original C implementation credits Isaku Wada for this algorithm (2002/01/09).
+	*
+	* @private
+	* @returns {number} pseudorandom number
+	*
+	* @example
+	* var r = normalized();
+	* // returns <number>
+	*/
+	function normalized() {
+		var x = mt19937() >>> 5;
+		var y = mt19937() >>> 6;
+		return ( (x*TWO_26)+y ) * FLOAT64_NORMALIZATION_CONSTANT;
+	}
+}
+
+
+// EXPORTS //
+
+module.exports = factory;
+
+},{"./rand_uint32.js":333,"@stdlib/array/to-json":42,"@stdlib/array/uint32":48,"@stdlib/assert/has-own-property":81,"@stdlib/assert/is-boolean":109,"@stdlib/assert/is-collection":117,"@stdlib/assert/is-plain-object":163,"@stdlib/assert/is-positive-integer":165,"@stdlib/assert/is-uint32array":189,"@stdlib/blas/base/gcopy":197,"@stdlib/constants/math/float64-max-safe-integer":213,"@stdlib/constants/math/uint32-max":225,"@stdlib/math/base/special/max":261,"@stdlib/math/base/special/uimul":280,"@stdlib/utils/define-nonenumerable-read-only-accessor":348,"@stdlib/utils/define-nonenumerable-read-only-property":350,"@stdlib/utils/define-nonenumerable-read-write-accessor":352}],331:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* A 32-bit Mersenne Twister pseudorandom number generator.
+*
+* @module @stdlib/random/base/mt19937
+*
+* @example
+* var mt19937 = require( '@stdlib/random/base/mt19937' );
+*
+* var v = mt19937();
+* // returns <number>
+*
+* @example
+* var factory = require( '@stdlib/random/base/mt19937' ).factory;
+*
+* var mt19937 = factory({
+*     'seed': 1234
+* });
+*
+* var v = mt19937();
+* // returns 822569775
+*/
+
+// MODULES //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var mt19937 = require( './main.js' );
+var factory = require( './factory.js' );
+
+
+// MAIN //
+
+setReadOnly( mt19937, 'factory', factory );
+
+
+// EXPORTS //
+
+module.exports = mt19937;
+
+},{"./factory.js":330,"./main.js":332,"@stdlib/utils/define-nonenumerable-read-only-property":350}],332:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var factory = require( './factory.js' );
+var randuint32 = require( './rand_uint32.js' );
+
+
+// MAIN //
+
+/**
+* Generates a pseudorandom integer on the interval \\( [1,2^{32}-1) \\).
+*
+* ## Method
+*
+* -   When generating normalized double-precision floating-point numbers, we first generate two pseudorandom integers \\( x \\) and \\( y \\) on the interval \\( [1,2^{32}-1) \\) for a combined \\( 64 \\) random bits.
+*
+* -   We would like \\( 53 \\) random bits to generate a 53-bit precision integer and, thus, want to discard \\( 11 \\) of the generated bits.
+*
+* -   We do so by discarding \\( 5 \\) bits from \\( x \\) and \\( 6 \\) bits from \\( y \\).
+*
+* -   Accordingly, \\( x \\) contains \\( 27 \\) random bits, which are subsequently shifted left \\( 26 \\) bits (multiplied by \\( 2^{26} \\), and \\( y \\) contains \\( 26 \\) random bits to fill in the lower \\( 26 \\) bits. When summed, they combine to comprise \\( 53 \\) random bits of a double-precision floating-point integer.
+*
+* -   As an example, suppose, for the sake of argument, the 32-bit PRNG generates the maximum unsigned 32-bit integer \\( 2^{32}-1 \\) twice in a row. Then,
+*
+*     ```javascript
+*     x = 4294967295 >>> 5; // 00000111111111111111111111111111
+*     y = 4294967295 >>> 6; // 00000011111111111111111111111111
+*     ```
+*
+*     Multiplying \\( x \\) by \\( 2^{26} \\) returns \\( 9007199187632128 \\), which, in binary, is
+*
+*     ```binarystring
+*     0 10000110011 11111111111111111111 11111100000000000000000000000000
+*     ```
+*
+*     Adding \\( y \\) yields \\( 9007199254740991 \\) (the maximum "safe" double-precision floating-point integer value), which, in binary, is
+*
+*     ```binarystring
+*     0 10000110011 11111111111111111111 11111111111111111111111111111111
+*     ```
+*
+* -   Similarly, suppose the 32-bit PRNG generates the following values
+*
+*     ```javascript
+*     x = 1 >>> 5;  // 0 => 00000000000000000000000000000000
+*     y = 64 >>> 6; // 1 => 00000000000000000000000000000001
+*     ```
+*
+*     Multiplying \\( x \\) by \\( 2^{26} \\) returns \\( 0 \\), which, in binary, is
+*
+*     ```binarystring
+*     0 00000000000 00000000000000000000 00000000000000000000000000000000
+*     ```
+*
+*     Adding \\( y \\) yields \\( 1 \\), which, in binary, is
+*
+*     ```binarystring
+*     0 01111111111 00000000000000000000 00000000000000000000000000000000
+*     ```
+*
+* -   As different combinations of \\( x \\) and \\( y \\) are generated, different combinations of double-precision floating-point exponent and significand bits will be toggled, thus generating pseudorandom double-precision floating-point numbers.
+*
+*
+* ## References
+*
+* -   Matsumoto, Makoto, and Takuji Nishimura. 1998. "Mersenne Twister: A 623-dimensionally Equidistributed Uniform Pseudo-random Number Generator." _ACM Transactions on Modeling and Computer Simulation_ 8 (1). New York, NY, USA: ACM: 3–30. doi:[10.1145/272991.272995][@matsumoto:1998a].
+* -   Harase, Shin. 2017. "Conversion of Mersenne Twister to double-precision floating-point numbers." _ArXiv_ abs/1708.06018 (September). <https://arxiv.org/abs/1708.06018>.
+*
+* [@matsumoto:1998a]: https://doi.org/10.1145/272991.272995
+*
+*
+* @function mt19937
+* @type {PRNG}
+* @returns {PositiveInteger} pseudorandom integer
+*
+* @example
+* var v = mt19937();
+* // returns <number>
+*/
+var mt19937 = factory({
+	'seed': randuint32()
+});
+
+
+// EXPORTS //
+
+module.exports = mt19937;
+
+},{"./factory.js":330,"./rand_uint32.js":333}],333:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var UINT32_MAX = require( '@stdlib/constants/math/uint32-max' );
+var floor = require( '@stdlib/math/base/special/floor' );
+
+
+// VARIABLES //
+
+var MAX = UINT32_MAX - 1;
+
+
+// MAIN //
+
+/**
+* Returns a pseudorandom integer on the interval \\([1, 2^{32}-1)\\).
+*
+* @private
+* @returns {PositiveInteger} pseudorandom integer
+*
+* @example
+* var v = randuint32();
+* // returns <number>
+*/
+function randuint32() {
+	var v = floor( 1.0 + (MAX*Math.random()) ); // eslint-disable-line stdlib/no-builtin-math
+	return v >>> 0; // asm type annotation
+}
+
+
+// EXPORTS //
+
+module.exports = randuint32;
+
+},{"@stdlib/constants/math/uint32-max":225,"@stdlib/math/base/special/floor":253}],334:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2021 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Regular expression to capture everything that is not a space immediately after the `function` keyword and before the first left parenthesis.
+*
+* @module @stdlib/regexp/function-name
+*
+* @example
+* var reFunctionName = require( '@stdlib/regexp/function-name' );
+* var RE_FUNCTION_NAME = reFunctionName();
+*
+* function fname( fcn ) {
+*     return RE_FUNCTION_NAME.exec( fcn.toString() )[ 1 ];
+* }
+*
+* var fn = fname( Math.sqrt );
+* // returns 'sqrt'
+*
+* fn = fname( Int8Array );
+* // returns 'Int8Array'
+*
+* fn = fname( Object.prototype.toString );
+* // returns 'toString'
+*
+* fn = fname( function(){} );
+* // returns ''
+*/
+
+// MODULES //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var reFunctionName = require( './main.js' );
+var REGEXP = require( './regexp.js' );
+
+
+// MAIN //
+
+setReadOnly( reFunctionName, 'REGEXP', REGEXP );
+
+
+// EXPORTS //
+
+module.exports = reFunctionName;
+
+},{"./main.js":335,"./regexp.js":336,"@stdlib/utils/define-nonenumerable-read-only-property":350}],335:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2021 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+/**
+* Returns a regular expression to capture everything that is not a space immediately after the `function` keyword and before the first left parenthesis.
+*
+* @returns {RegExp} regular expression
+*
+* @example
+* var RE_FUNCTION_NAME = reFunctionName();
+*
+* function fname( fcn ) {
+*     return RE_FUNCTION_NAME.exec( fcn.toString() )[ 1 ];
+* }
+*
+* var fn = fname( Math.sqrt );
+* // returns 'sqrt'
+*
+* fn = fname( Int8Array );
+* // returns 'Int8Array'
+*
+* fn = fname( Object.prototype.toString );
+* // returns 'toString'
+*
+* fn = fname( function(){} );
+* // returns ''
+*/
+function reFunctionName() {
+	return /^\s*function\s*([^(]*)/i;
+}
+
+
+// EXPORTS //
+
+module.exports = reFunctionName;
+
+},{}],336:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var reFunctionName = require( './main.js' );
+
+
+// MAIN //
+
+/**
+* Captures everything that is not a space immediately after the `function` keyword and before the first left parenthesis.
+*
+* Regular expression: `/^\s*function\s*([^(]*)/i`
+*
+* -   `/^\s*`
+*     -   Match zero or more spaces at beginning
+*
+* -   `function`
+*     -   Match the word `function`
+*
+* -   `\s*`
+*     -   Match zero or more spaces after the word `function`
+*
+* -   `()`
+*     -   Capture
+*
+* -   `[^(]*`
+*     -   Match anything except a left parenthesis `(` zero or more times
+*
+* -   `/i`
+*     -   ignore case
+*
+* @constant
+* @type {RegExp}
+* @default /^\s*function\s*([^(]*)/i
+*/
+var RE_FUNCTION_NAME = reFunctionName();
+
+
+// EXPORTS //
+
+module.exports = RE_FUNCTION_NAME;
+
+},{"./main.js":335}],337:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Return a regular expression to parse a regular expression string.
+*
+* @module @stdlib/regexp/regexp
+*
+* @example
+* var reRegExp = require( '@stdlib/regexp/regexp' );
+*
+* var RE_REGEXP = reRegExp();
+*
+* var bool = RE_REGEXP.test( '/^beep$/' );
+* // returns true
+*
+* bool = RE_REGEXP.test( '' );
+* // returns false
+*
+* @example
+* var reRegExp = require( '@stdlib/regexp/regexp' );
+*
+* var RE_REGEXP = reRegExp();
+*
+* var parts = RE_REGEXP.exec( '/^.*$/ig' );
+* // returns [ '/^.*$/ig', '^.*$', 'ig', 'index': 0, 'input': '/^.*$/ig' ]
+*/
+
+// MAIN //
+
+var setReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+var reRegExp = require( './main.js' );
+var REGEXP = require( './regexp.js' );
+
+
+// MAIN //
+
+setReadOnly( reRegExp, 'REGEXP', REGEXP );
+
+
+// EXPORTS //
+
+module.exports = reRegExp;
+
+
+// EXPORTS //
+
+module.exports = reRegExp;
+
+},{"./main.js":338,"./regexp.js":339,"@stdlib/utils/define-nonenumerable-read-only-property":350}],338:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2021 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+/**
+* Returns a regular expression to parse a regular expression string.
+*
+* @returns {RegExp} regular expression
+*
+* @example
+* var RE_REGEXP = reRegExp();
+*
+* var bool = RE_REGEXP.test( '/^beep$/' );
+* // returns true
+*
+* bool = RE_REGEXP.test( '' );
+* // returns false
+*/
+function reRegExp() {
+	return /^\/((?:\\\/|[^\/])+)\/([imgy]*)$/; // eslint-disable-line no-useless-escape
+}
+
+
+// EXPORTS //
+
+module.exports = reRegExp;
+
+},{}],339:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var reRegExp = require( './main.js' );
+
+
+// MAIN //
+
+/**
+* Matches parts of a regular expression string.
+*
+* Regular expression: `/^\/((?:\\\/|[^\/])+)\/([imgy]*)$/`
+*
+* -   `/^\/`
+*     -   match a string that begins with a `/`
+*
+* -   `()`
+*     -   capture
+*
+* -   `(?:)+`
+*     -   capture, but do not remember, a group of characters which occur one or more times
+*
+* -   `\\\/`
+*     -   match the literal `\/`
+*
+* -   `|`
+*     -   OR
+*
+* -   `[^\/]`
+*     -   anything which is not the literal `\/`
+*
+* -   `\/`
+*     -   match the literal `/`
+*
+* -   `([imgy]*)`
+*     -   capture any characters matching `imgy` occurring zero or more times
+*
+* -   `$/`
+*     -   string end
+*
+*
+* @constant
+* @type {RegExp}
+* @default /^\/((?:\\\/|[^\/])+)\/([imgy]*)$/
+*/
+var RE_REGEXP = reRegExp();
+
+
+// EXPORTS //
+
+module.exports = RE_REGEXP;
+
+},{"./main.js":338}],340:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Creates a function which always returns the same value.
+*
+* @param {*} [value] - value to always return
+* @returns {Function} constant function
+*
+* @example
+* var fcn = wrap( 3.14 );
+*
+* var v = fcn();
+* // returns 3.14
+*
+* v = fcn();
+* // returns 3.14
+*
+* v = fcn();
+* // returns 3.14
+*/
+function wrap( value ) {
+	return constantFunction;
+
+	/**
+	* Constant function.
+	*
+	* @private
+	* @returns {*} constant value
+	*/
+	function constantFunction() {
+		return value;
+	}
+}
+
+
+// EXPORTS //
+
+module.exports = wrap;
+
+},{}],341:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Create a constant function.
+*
+* @module @stdlib/utils/constant-function
+*
+* @example
+* var constantFunction = require( '@stdlib/utils/constant-function' );
+*
+* var fcn = constantFunction( 3.14 );
+*
+* var v = fcn();
+* // returns 3.14
+*
+* v = fcn();
+* // returns 3.14
+*
+* v = fcn();
+* // returns 3.14
+*/
+
+// MODULES //
+
+var constantFunction = require( './constant_function.js' );
+
+
+// EXPORTS //
+
+module.exports = constantFunction;
+
+},{"./constant_function.js":340}],342:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Determine the name of a value's constructor.
+*
+* @module @stdlib/utils/constructor-name
+*
+* @example
+* var constructorName = require( '@stdlib/utils/constructor-name' );
+*
+* var v = constructorName( 'a' );
+* // returns 'String'
+*
+* v = constructorName( {} );
+* // returns 'Object'
+*
+* v = constructorName( true );
+* // returns 'Boolean'
+*/
+
+// MODULES //
+
+var constructorName = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = constructorName;
+
+},{"./main.js":343}],343:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var nativeClass = require( '@stdlib/utils/native-class' );
+var RE = require( '@stdlib/regexp/function-name' ).REGEXP;
+var isBuffer = require( '@stdlib/assert/is-buffer' );
+
+
+// MAIN //
+
+/**
+* Determines the name of a value's constructor.
+*
+* @param {*} v - input value
+* @returns {string} name of a value's constructor
+*
+* @example
+* var v = constructorName( 'a' );
+* // returns 'String'
+*
+* @example
+* var v = constructorName( 5 );
+* // returns 'Number'
+*
+* @example
+* var v = constructorName( null );
+* // returns 'Null'
+*
+* @example
+* var v = constructorName( undefined );
+* // returns 'Undefined'
+*
+* @example
+* var v = constructorName( function noop() {} );
+* // returns 'Function'
+*/
+function constructorName( v ) {
+	var match;
+	var name;
+	var ctor;
+	name = nativeClass( v ).slice( 8, -1 );
+	if ( (name === 'Object' || name === 'Error') && v.constructor ) {
+		ctor = v.constructor;
+		if ( typeof ctor.name === 'string' ) {
+			return ctor.name;
+		}
+		match = RE.exec( ctor.toString() );
+		if ( match ) {
+			return match[ 1 ];
+		}
+	}
+	if ( isBuffer( v ) ) {
+		return 'Buffer';
+	}
+	return name;
+}
+
+
+// EXPORTS //
+
+module.exports = constructorName;
+
+},{"@stdlib/assert/is-buffer":115,"@stdlib/regexp/function-name":334,"@stdlib/utils/native-class":389}],344:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isArray = require( '@stdlib/assert/is-array' );
+var isNonNegativeInteger = require( '@stdlib/assert/is-nonnegative-integer' ).isPrimitive;
+var PINF = require( '@stdlib/constants/math/float64-pinf' );
+var deepCopy = require( './deep_copy.js' );
+
+
+// MAIN //
+
+/**
+* Copies or deep clones a value to an arbitrary depth.
+*
+* @param {*} value - value to copy
+* @param {NonNegativeInteger} [level=+infinity] - copy depth
+* @throws {TypeError} `level` must be a nonnegative integer
+* @returns {*} value copy
+*
+* @example
+* var out = copy( 'beep' );
+* // returns 'beep'
+*
+* @example
+* var value = [
+*     {
+*         'a': 1,
+*         'b': true,
+*         'c': [ 1, 2, 3 ]
+*     }
+* ];
+* var out = copy( value );
+* // returns [ { 'a': 1, 'b': true, 'c': [ 1, 2, 3 ] } ]
+*
+* var bool = ( value[0].c === out[0].c );
+* // returns false
+*/
+function copy( value, level ) {
+	var out;
+	if ( arguments.length > 1 ) {
+		if ( !isNonNegativeInteger( level ) ) {
+			throw new TypeError( 'invalid argument. `level` must be a nonnegative integer. Value: `' + level + '`.' );
+		}
+		if ( level === 0 ) {
+			return value;
+		}
+	} else {
+		level = PINF;
+	}
+	out = ( isArray( value ) ) ? new Array( value.length ) : {};
+	return deepCopy( value, out, [value], [out], level );
+}
+
+
+// EXPORTS //
+
+module.exports = copy;
+
+},{"./deep_copy.js":345,"@stdlib/assert/is-array":107,"@stdlib/assert/is-nonnegative-integer":149,"@stdlib/constants/math/float64-pinf":216}],345:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var hasOwnProp = require( '@stdlib/assert/has-own-property' );
+var isArray = require( '@stdlib/assert/is-array' );
+var isBuffer = require( '@stdlib/assert/is-buffer' );
+var isError = require( '@stdlib/assert/is-error' );
+var typeOf = require( '@stdlib/utils/type-of' );
+var regexp = require( '@stdlib/utils/regexp-from-string' );
+var indexOf = require( '@stdlib/utils/index-of' );
+var objectKeys = require( '@stdlib/utils/keys' );
+var propertyNames = require( '@stdlib/utils/property-names' );
+var propertyDescriptor = require( '@stdlib/utils/property-descriptor' );
+var getPrototypeOf = require( '@stdlib/utils/get-prototype-of' );
+var defineProperty = require( '@stdlib/utils/define-property' );
+var copyBuffer = require( '@stdlib/buffer/from-buffer' );
+var typedArrays = require( './typed_arrays.js' );
+
+
+// FUNCTIONS //
+
+/**
+* Clones a class instance.
+*
+* ## Notes
+*
+* -   This should **only** be used for simple cases. Any instances with privileged access to variables (e.g., within closures) cannot be cloned. This approach should be considered **fragile**.
+* -   The function is greedy, disregarding the notion of a `level`. Instead, the function deep copies all properties, as we assume the concept of `level` applies only to the class instance reference but not to its internal state. This prevents, in theory, two instances from sharing state.
+*
+*
+* @private
+* @param {Object} val - class instance
+* @returns {Object} new instance
+*/
+function cloneInstance( val ) {
+	var cache;
+	var names;
+	var name;
+	var refs;
+	var desc;
+	var tmp;
+	var ref;
+	var i;
+
+	cache = [];
+	refs = [];
+
+	ref = Object.create( getPrototypeOf( val ) );
+	cache.push( val );
+	refs.push( ref );
+
+	names = propertyNames( val );
+	for ( i = 0; i < names.length; i++ ) {
+		name = names[ i ];
+		desc = propertyDescriptor( val, name );
+		if ( hasOwnProp( desc, 'value' ) ) {
+			tmp = ( isArray( val[name] ) ) ? [] : {};
+			desc.value = deepCopy( val[name], tmp, cache, refs, -1 );
+		}
+		defineProperty( ref, name, desc );
+	}
+	if ( !Object.isExtensible( val ) ) {
+		Object.preventExtensions( ref );
+	}
+	if ( Object.isSealed( val ) ) {
+		Object.seal( ref );
+	}
+	if ( Object.isFrozen( val ) ) {
+		Object.freeze( ref );
+	}
+	return ref;
+}
+
+/**
+* Copies an error object.
+*
+* @private
+* @param {(Error|TypeError|SyntaxError|URIError|ReferenceError|RangeError|EvalError)} error - error to copy
+* @returns {(Error|TypeError|SyntaxError|URIError|ReferenceError|RangeError|EvalError)} error copy
+*
+* @example
+* var err1 = new TypeError( 'beep' );
+*
+* var err2 = copyError( err1 );
+* // returns <TypeError>
+*/
+function copyError( error ) {
+	var cache = [];
+	var refs = [];
+	var keys;
+	var desc;
+	var tmp;
+	var key;
+	var err;
+	var i;
+
+	// Create a new error...
+	err = new error.constructor( error.message );
+
+	cache.push( error );
+	refs.push( err );
+
+	// If a `stack` property is present, copy it over...
+	if ( error.stack ) {
+		err.stack = error.stack;
+	}
+	// Node.js specific (system errors)...
+	if ( error.code ) {
+		err.code = error.code;
+	}
+	if ( error.errno ) {
+		err.errno = error.errno;
+	}
+	if ( error.syscall ) {
+		err.syscall = error.syscall;
+	}
+	// Any enumerable properties...
+	keys = objectKeys( error );
+	for ( i = 0; i < keys.length; i++ ) {
+		key = keys[ i ];
+		desc = propertyDescriptor( error, key );
+		if ( hasOwnProp( desc, 'value' ) ) {
+			tmp = ( isArray( error[ key ] ) ) ? [] : {};
+			desc.value = deepCopy( error[ key ], tmp, cache, refs, -1 );
+		}
+		defineProperty( err, key, desc );
+	}
+	return err;
+}
+
+
+// MAIN //
+
+/**
+* Recursively performs a deep copy of an input object.
+*
+* @private
+* @param {*} val - value to copy
+* @param {(Array|Object)} copy - copy
+* @param {Array} cache - an array of visited objects
+* @param {Array} refs - an array of object references
+* @param {NonNegativeInteger} level - copy depth
+* @returns {*} deep copy
+*/
+function deepCopy( val, copy, cache, refs, level ) {
+	var parent;
+	var keys;
+	var name;
+	var desc;
+	var ctor;
+	var key;
+	var ref;
+	var x;
+	var i;
+	var j;
+
+	level -= 1;
+
+	// Primitives and functions...
+	if (
+		typeof val !== 'object' ||
+		val === null
+	) {
+		return val;
+	}
+	if ( isBuffer( val ) ) {
+		return copyBuffer( val );
+	}
+	if ( isError( val ) ) {
+		return copyError( val );
+	}
+	// Objects...
+	name = typeOf( val );
+
+	if ( name === 'date' ) {
+		return new Date( +val );
+	}
+	if ( name === 'regexp' ) {
+		return regexp( val.toString() );
+	}
+	if ( name === 'set' ) {
+		return new Set( val );
+	}
+	if ( name === 'map' ) {
+		return new Map( val );
+	}
+	if (
+		name === 'string' ||
+		name === 'boolean' ||
+		name === 'number'
+	) {
+		// If provided an `Object`, return an equivalent primitive!
+		return val.valueOf();
+	}
+	ctor = typedArrays[ name ];
+	if ( ctor ) {
+		return ctor( val );
+	}
+	// Class instances...
+	if (
+		name !== 'array' &&
+		name !== 'object'
+	) {
+		// Cloning requires ES5 or higher...
+		if ( typeof Object.freeze === 'function' ) {
+			return cloneInstance( val );
+		}
+		return {};
+	}
+	// Arrays and plain objects...
+	keys = objectKeys( val );
+	if ( level > 0 ) {
+		parent = name;
+		for ( j = 0; j < keys.length; j++ ) {
+			key = keys[ j ];
+			x = val[ key ];
+
+			// Primitive, Buffer, special class instance...
+			name = typeOf( x );
+			if (
+				typeof x !== 'object' ||
+				x === null ||
+				(
+					name !== 'array' &&
+					name !== 'object'
+				) ||
+				isBuffer( x )
+			) {
+				if ( parent === 'object' ) {
+					desc = propertyDescriptor( val, key );
+					if ( hasOwnProp( desc, 'value' ) ) {
+						desc.value = deepCopy( x );
+					}
+					defineProperty( copy, key, desc );
+				} else {
+					copy[ key ] = deepCopy( x );
+				}
+				continue;
+			}
+			// Circular reference...
+			i = indexOf( cache, x );
+			if ( i !== -1 ) {
+				copy[ key ] = refs[ i ];
+				continue;
+			}
+			// Plain array or object...
+			ref = ( isArray( x ) ) ? new Array( x.length ) : {};
+			cache.push( x );
+			refs.push( ref );
+			if ( parent === 'array' ) {
+				copy[ key ] = deepCopy( x, ref, cache, refs, level );
+			} else {
+				desc = propertyDescriptor( val, key );
+				if ( hasOwnProp( desc, 'value' ) ) {
+					desc.value = deepCopy( x, ref, cache, refs, level );
+				}
+				defineProperty( copy, key, desc );
+			}
+		}
+	} else if ( name === 'array' ) {
+		for ( j = 0; j < keys.length; j++ ) {
+			key = keys[ j ];
+			copy[ key ] = val[ key ];
+		}
+	} else {
+		for ( j = 0; j < keys.length; j++ ) {
+			key = keys[ j ];
+			desc = propertyDescriptor( val, key );
+			defineProperty( copy, key, desc );
+		}
+	}
+	if ( !Object.isExtensible( val ) ) {
+		Object.preventExtensions( copy );
+	}
+	if ( Object.isSealed( val ) ) {
+		Object.seal( copy );
+	}
+	if ( Object.isFrozen( val ) ) {
+		Object.freeze( copy );
+	}
+	return copy;
+}
+
+
+// EXPORTS //
+
+module.exports = deepCopy;
+
+},{"./typed_arrays.js":347,"@stdlib/assert/has-own-property":81,"@stdlib/assert/is-array":107,"@stdlib/assert/is-buffer":115,"@stdlib/assert/is-error":123,"@stdlib/buffer/from-buffer":204,"@stdlib/utils/define-property":355,"@stdlib/utils/get-prototype-of":361,"@stdlib/utils/index-of":371,"@stdlib/utils/keys":382,"@stdlib/utils/property-descriptor":398,"@stdlib/utils/property-names":402,"@stdlib/utils/regexp-from-string":405,"@stdlib/utils/type-of":410}],346:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Copy or deep clone a value to an arbitrary depth.
+*
+* @module @stdlib/utils/copy
+*
+* @example
+* var copy = require( '@stdlib/utils/copy' );
+*
+* var out = copy( 'beep' );
+* // returns 'beep'
+*
+* @example
+* var copy = require( '@stdlib/utils/copy' );
+*
+* var value = [
+*     {
+*         'a': 1,
+*         'b': true,
+*         'c': [ 1, 2, 3 ]
+*     }
+* ];
+* var out = copy( value );
+* // returns [ {'a': 1, 'b': true, 'c': [ 1, 2, 3 ] } ]
+*
+* var bool = ( value[0].c === out[0].c );
+* // returns false
+*/
+
+// MODULES //
+
+var copy = require( './copy.js' );
+
+
+// EXPORTS //
+
+module.exports = copy;
+
+},{"./copy.js":344}],347:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var Int8Array = require( '@stdlib/array/int8' );
+var Uint8Array = require( '@stdlib/array/uint8' );
+var Uint8ClampedArray = require( '@stdlib/array/uint8c' );
+var Int16Array = require( '@stdlib/array/int16' );
+var Uint16Array = require( '@stdlib/array/uint16' );
+var Int32Array = require( '@stdlib/array/int32' );
+var Uint32Array = require( '@stdlib/array/uint32' );
+var Float32Array = require( '@stdlib/array/float32' );
+var Float64Array = require( '@stdlib/array/float64' );
+
+
+// VARIABLES //
+
+var hash;
+
+
+// FUNCTIONS //
+
+/**
+* Copies an `Int8Array`.
+*
+* @private
+* @param {Int8Array} arr - array to copy
+* @returns {Int8Array} new array
+*/
+function int8array( arr ) {
+	return new Int8Array( arr );
+}
+
+/**
+* Copies a `Uint8Array`.
+*
+* @private
+* @param {Uint8Array} arr - array to copy
+* @returns {Uint8Array} new array
+*/
+function uint8array( arr ) {
+	return new Uint8Array( arr );
+}
+
+/**
+* Copies a `Uint8ClampedArray`.
+*
+* @private
+* @param {Uint8ClampedArray} arr - array to copy
+* @returns {Uint8ClampedArray} new array
+*/
+function uint8clampedarray( arr ) {
+	return new Uint8ClampedArray( arr );
+}
+
+/**
+* Copies an `Int16Array`.
+*
+* @private
+* @param {Int16Array} arr - array to copy
+* @returns {Int16Array} new array
+*/
+function int16array( arr ) {
+	return new Int16Array( arr );
+}
+
+/**
+* Copies a `Uint16Array`.
+*
+* @private
+* @param {Uint16Array} arr - array to copy
+* @returns {Uint16Array} new array
+*/
+function uint16array( arr ) {
+	return new Uint16Array( arr );
+}
+
+/**
+* Copies an `Int32Array`.
+*
+* @private
+* @param {Int32Array} arr - array to copy
+* @returns {Int32Array} new array
+*/
+function int32array( arr ) {
+	return new Int32Array( arr );
+}
+
+/**
+* Copies a `Uint32Array`.
+*
+* @private
+* @param {Uint32Array} arr - array to copy
+* @returns {Uint32Array} new array
+*/
+function uint32array( arr ) {
+	return new Uint32Array( arr );
+}
+
+/**
+* Copies a `Float32Array`.
+*
+* @private
+* @param {Float32Array} arr - array to copy
+* @returns {Float32Array} new array
+*/
+function float32array( arr ) {
+	return new Float32Array( arr );
+}
+
+/**
+* Copies a `Float64Array`.
+*
+* @private
+* @param {Float64Array} arr - array to copy
+* @returns {Float64Array} new array
+*/
+function float64array( arr ) {
+	return new Float64Array( arr );
+}
+
+/**
+* Returns a hash of functions for copying typed arrays.
+*
+* @private
+* @returns {Object} function hash
+*/
+function typedarrays() {
+	var out = {
+		'int8array': int8array,
+		'uint8array': uint8array,
+		'uint8clampedarray': uint8clampedarray,
+		'int16array': int16array,
+		'uint16array': uint16array,
+		'int32array': int32array,
+		'uint32array': uint32array,
+		'float32array': float32array,
+		'float64array': float64array
+	};
+	return out;
+}
+
+
+// MAIN //
+
+hash = typedarrays();
+
+
+// EXPORTS //
+
+module.exports = hash;
+
+},{"@stdlib/array/float32":27,"@stdlib/array/float64":30,"@stdlib/array/int16":32,"@stdlib/array/int32":35,"@stdlib/array/int8":38,"@stdlib/array/uint16":45,"@stdlib/array/uint32":48,"@stdlib/array/uint8":51,"@stdlib/array/uint8c":54}],348:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Define a non-enumerable read-only accessor.
+*
+* @module @stdlib/utils/define-nonenumerable-read-only-accessor
+*
+* @example
+* var setNonEnumerableReadOnlyAccessor = require( '@stdlib/utils/define-nonenumerable-read-only-accessor' );
+*
+* function getter() {
+*     return 'bar';
+* }
+*
+* var obj = {};
+*
+* setNonEnumerableReadOnlyAccessor( obj, 'foo', getter );
+*
+* try {
+*     obj.foo = 'boop';
+* } catch ( err ) {
+*     console.error( err.message );
+* }
+*/
+
+// MODULES //
+
+var setNonEnumerableReadOnlyAccessor = require( './main.js' ); // eslint-disable-line id-length
+
+
+// EXPORTS //
+
+module.exports = setNonEnumerableReadOnlyAccessor;
+
+},{"./main.js":349}],349:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var defineProperty = require( '@stdlib/utils/define-property' );
+
+
+// MAIN //
+
+/**
+* Defines a non-enumerable read-only accessor.
+*
+* @param {Object} obj - object on which to define the property
+* @param {(string|symbol)} prop - property name
+* @param {Function} getter - accessor
+*
+* @example
+* function getter() {
+*     return 'bar';
+* }
+*
+* var obj = {};
+*
+* setNonEnumerableReadOnlyAccessor( obj, 'foo', getter );
+*
+* try {
+*     obj.foo = 'boop';
+* } catch ( err ) {
+*     console.error( err.message );
+* }
+*/
+function setNonEnumerableReadOnlyAccessor( obj, prop, getter ) { // eslint-disable-line id-length
+	defineProperty( obj, prop, {
+		'configurable': false,
+		'enumerable': false,
+		'get': getter
+	});
+}
+
+
+// EXPORTS //
+
+module.exports = setNonEnumerableReadOnlyAccessor;
+
+},{"@stdlib/utils/define-property":355}],350:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Define a non-enumerable read-only property.
+*
+* @module @stdlib/utils/define-nonenumerable-read-only-property
+*
+* @example
+* var setNonEnumerableReadOnly = require( '@stdlib/utils/define-nonenumerable-read-only-property' );
+*
+* var obj = {};
+*
+* setNonEnumerableReadOnly( obj, 'foo', 'bar' );
+*
+* try {
+*     obj.foo = 'boop';
+* } catch ( err ) {
+*     console.error( err.message );
+* }
+*/
+
+// MODULES //
+
+var setNonEnumerableReadOnly = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = setNonEnumerableReadOnly;
+
+},{"./main.js":351}],351:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var defineProperty = require( '@stdlib/utils/define-property' );
+
+
+// MAIN //
+
+/**
+* Defines a non-enumerable read-only property.
+*
+* @param {Object} obj - object on which to define the property
+* @param {(string|symbol)} prop - property name
+* @param {*} value - value to set
+*
+* @example
+* var obj = {};
+*
+* setNonEnumerableReadOnly( obj, 'foo', 'bar' );
+*
+* try {
+*     obj.foo = 'boop';
+* } catch ( err ) {
+*     console.error( err.message );
+* }
+*/
+function setNonEnumerableReadOnly( obj, prop, value ) {
+	defineProperty( obj, prop, {
+		'configurable': false,
+		'enumerable': false,
+		'writable': false,
+		'value': value
+	});
+}
+
+
+// EXPORTS //
+
+module.exports = setNonEnumerableReadOnly;
+
+},{"@stdlib/utils/define-property":355}],352:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Define a non-enumerable read-write accessor.
+*
+* @module @stdlib/utils/define-nonenumerable-read-write-accessor
+*
+* @example
+* var setNonEnumerableReadWriteAccessor = require( '@stdlib/utils/define-nonenumerable-read-write-accessor' );
+*
+* function getter() {
+*     return name + ' foo';
+* }
+*
+* function setter( v ) {
+*     name = v;
+* }
+*
+* var name = 'bar';
+* var obj = {};
+*
+* setNonEnumerableReadWriteAccessor( obj, 'foo', getter, setter );
+*
+* var v = obj.foo;
+* // returns 'bar foo'
+*
+* obj.foo = 'beep';
+*
+* v = obj.foo;
+* // returns 'beep foo'
+*/
+
+// MODULES //
+
+var setNonEnumerableReadWriteAccessor = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = setNonEnumerableReadWriteAccessor;
+
+},{"./main.js":353}],353:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var defineProperty = require( '@stdlib/utils/define-property' );
+
+
+// MAIN //
+
+/**
+* Defines a non-enumerable read-write accessor.
+*
+* @param {Object} obj - object on which to define the property
+* @param {(string|symbol)} prop - property name
+* @param {Function} getter - get accessor
+* @param {Function} setter - set accessor
+*
+* @example
+* function getter() {
+*     return name + ' foo';
+* }
+*
+* function setter( v ) {
+*     name = v;
+* }
+*
+* var name = 'bar';
+* var obj = {};
+*
+* setNonEnumerableReadWriteAccessor( obj, 'foo', getter, setter );
+*
+* var v = obj.foo;
+* // returns 'bar foo'
+*
+* obj.foo = 'beep';
+*
+* v = obj.foo;
+* // returns 'beep foo'
+*/
+function setNonEnumerableReadWriteAccessor( obj, prop, getter, setter ) { // eslint-disable-line id-length
+	defineProperty( obj, prop, {
+		'configurable': false,
+		'enumerable': false,
+		'get': getter,
+		'set': setter
+	});
+}
+
+
+// EXPORTS //
+
+module.exports = setNonEnumerableReadWriteAccessor;
+
+},{"@stdlib/utils/define-property":355}],354:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+/**
+* Defines (or modifies) an object property.
+*
+* ## Notes
+*
+* -   Property descriptors come in two flavors: **data descriptors** and **accessor descriptors**. A data descriptor is a property that has a value, which may or may not be writable. An accessor descriptor is a property described by a getter-setter function pair. A descriptor must be one of these two flavors and cannot be both.
+*
+* @name defineProperty
+* @type {Function}
+* @param {Object} obj - object on which to define the property
+* @param {(string|symbol)} prop - property name
+* @param {Object} descriptor - property descriptor
+* @param {boolean} [descriptor.configurable=false] - boolean indicating if property descriptor can be changed and if the property can be deleted from the provided object
+* @param {boolean} [descriptor.enumerable=false] - boolean indicating if the property shows up when enumerating object properties
+* @param {boolean} [descriptor.writable=false] - boolean indicating if the value associated with the property can be changed with an assignment operator
+* @param {*} [descriptor.value] - property value
+* @param {(Function|void)} [descriptor.get=undefined] - function which serves as a getter for the property, or, if no getter, undefined. When the property is accessed, a getter function is called without arguments and with the `this` context set to the object through which the property is accessed (which may not be the object on which the property is defined due to inheritance). The return value will be used as the property value.
+* @param {(Function|void)} [descriptor.set=undefined] - function which serves as a setter for the property, or, if no setter, undefined. When assigning a property value, a setter function is called with one argument (the value being assigned to the property) and with the `this` context set to the object through which the property is assigned.
+* @throws {TypeError} first argument must be an object
+* @throws {TypeError} third argument must be an object
+* @throws {Error} property descriptor cannot have both a value and a setter and/or getter
+* @returns {Object} object with added property
+*
+* @example
+* var obj = {};
+*
+* defineProperty( obj, 'foo', {
+*     'value': 'bar'
+* });
+*
+* var str = obj.foo;
+* // returns 'bar'
+*/
+var defineProperty = Object.defineProperty;
+
+
+// EXPORTS //
+
+module.exports = defineProperty;
+
+},{}],355:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Define (or modify) an object property.
+*
+* @module @stdlib/utils/define-property
+*
+* @example
+* var defineProperty = require( '@stdlib/utils/define-property' );
+*
+* var obj = {};
+* defineProperty( obj, 'foo', {
+*     'value': 'bar',
+*     'writable': false,
+*     'configurable': false,
+*     'enumerable': false
+* });
+* obj.foo = 'boop'; // => throws
+*/
+
+// MODULES //
+
+var hasDefinePropertySupport = require( '@stdlib/assert/has-define-property-support' );
+var builtin = require( './builtin.js' );
+var polyfill = require( './polyfill.js' );
+
+
+// MAIN //
+
+var defineProperty;
+if ( hasDefinePropertySupport() ) {
+	defineProperty = builtin;
+} else {
+	defineProperty = polyfill;
+}
+
+
+// EXPORTS //
+
+module.exports = defineProperty;
+
+},{"./builtin.js":354,"./polyfill.js":356,"@stdlib/assert/has-define-property-support":58}],356:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+/* eslint-disable no-underscore-dangle, no-proto */
+
+'use strict';
+
+// MODULES //
+
+var hasProperty = require( '@stdlib/assert/has-property' );
+var isObject = require( '@stdlib/assert/is-object' );
+
+
+// VARIABLES //
+
+var objectProtoype = Object.prototype;
+var defineGetter = objectProtoype.__defineGetter__;
+var defineSetter = objectProtoype.__defineSetter__;
+var lookupGetter = objectProtoype.__lookupGetter__;
+var lookupSetter = objectProtoype.__lookupSetter__;
+
+
+// MAIN //
+
+/**
+* Defines (or modifies) an object property.
+*
+* ## Notes
+*
+* -   Property descriptors come in two flavors: **data descriptors** and **accessor descriptors**. A data descriptor is a property that has a value, which may or may not be writable. An accessor descriptor is a property described by a getter-setter function pair. A descriptor must be one of these two flavors and cannot be both.
+*
+* @param {Object} obj - object on which to define the property
+* @param {string} prop - property name
+* @param {Object} descriptor - property descriptor
+* @param {boolean} [descriptor.configurable=false] - boolean indicating if property descriptor can be changed and if the property can be deleted from the provided object
+* @param {boolean} [descriptor.enumerable=false] - boolean indicating if the property shows up when enumerating object properties
+* @param {boolean} [descriptor.writable=false] - boolean indicating if the value associated with the property can be changed with an assignment operator
+* @param {*} [descriptor.value] - property value
+* @param {(Function|void)} [descriptor.get=undefined] - function which serves as a getter for the property, or, if no getter, undefined. When the property is accessed, a getter function is called without arguments and with the `this` context set to the object through which the property is accessed (which may not be the object on which the property is defined due to inheritance). The return value will be used as the property value.
+* @param {(Function|void)} [descriptor.set=undefined] - function which serves as a setter for the property, or, if no setter, undefined. When assigning a property value, a setter function is called with one argument (the value being assigned to the property) and with the `this` context set to the object through which the property is assigned.
+* @throws {TypeError} first argument must be an object
+* @throws {TypeError} third argument must be an object
+* @throws {Error} property descriptor cannot have both a value and a setter and/or getter
+* @returns {Object} object with added property
+*
+* @example
+* var obj = {};
+*
+* defineProperty( obj, 'foo', {
+*     'value': 'bar'
+* });
+*
+* var str = obj.foo;
+* // returns 'bar'
+*/
+function defineProperty( obj, prop, descriptor ) {
+	var prototype;
+	var hasValue;
+	var hasGet;
+	var hasSet;
+
+	if ( !isObject( obj ) ) {
+		throw new TypeError( 'invalid argument. First argument must be an object. Value: `' + obj + '`.' );
+	}
+	if ( !isObject( descriptor ) ) {
+		throw new TypeError( 'invalid argument. Property descriptor must be an object. Value: `' + descriptor + '`.' );
+	}
+	hasValue = hasProperty( descriptor, 'value' );
+	if ( hasValue ) {
+		if (
+			lookupGetter.call( obj, prop ) ||
+			lookupSetter.call( obj, prop )
+		) {
+			// Override `__proto__` to avoid touching inherited accessors:
+			prototype = obj.__proto__;
+			obj.__proto__ = objectProtoype;
+
+			// Delete property as existing getters/setters prevent assigning value to specified property:
+			delete obj[ prop ];
+			obj[ prop ] = descriptor.value;
+
+			// Restore original prototype:
+			obj.__proto__ = prototype;
+		} else {
+			obj[ prop ] = descriptor.value;
+		}
+	}
+	hasGet = hasProperty( descriptor, 'get' );
+	hasSet = hasProperty( descriptor, 'set' );
+
+	if ( hasValue && ( hasGet || hasSet ) ) {
+		throw new Error( 'invalid argument. Cannot specify one or more accessors and a value or writable attribute in the property descriptor.' );
+	}
+
+	if ( hasGet && defineGetter ) {
+		defineGetter.call( obj, prop, descriptor.get );
+	}
+	if ( hasSet && defineSetter ) {
+		defineSetter.call( obj, prop, descriptor.set );
+	}
+	return obj;
+}
+
+
+// EXPORTS //
+
+module.exports = defineProperty;
+
+},{"@stdlib/assert/has-property":83,"@stdlib/assert/is-object":161}],357:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isFunction = require( '@stdlib/assert/is-function' );
+var hasFunctionNameSupport = require( '@stdlib/assert/has-function-name-support' );
+var RE = require( '@stdlib/regexp/function-name' ).REGEXP;
+
+
+// VARIABLES //
+
+var isFunctionNameSupported = hasFunctionNameSupport();
+
+
+// MAIN //
+
+/**
+* Returns the name of a function.
+*
+* @param {Function} fcn - input function
+* @throws {TypeError} must provide a function
+* @returns {string} function name
+*
+* @example
+* var v = functionName( Math.sqrt );
+* // returns 'sqrt'
+*
+* @example
+* var v = functionName( function foo(){} );
+* // returns 'foo'
+*
+* @example
+* var v = functionName( function(){} );
+* // returns '' || 'anonymous'
+*
+* @example
+* var v = functionName( String );
+* // returns 'String'
+*/
+function functionName( fcn ) {
+	// TODO: add support for generator functions?
+	if ( isFunction( fcn ) === false ) {
+		throw new TypeError( 'invalid argument. Must provide a function. Value: `' + fcn + '`.' );
+	}
+	if ( isFunctionNameSupported ) {
+		return fcn.name;
+	}
+	return RE.exec( fcn.toString() )[ 1 ];
+}
+
+
+// EXPORTS //
+
+module.exports = functionName;
+
+},{"@stdlib/assert/has-function-name-support":67,"@stdlib/assert/is-function":129,"@stdlib/regexp/function-name":334}],358:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Return the name of a function.
+*
+* @module @stdlib/utils/function-name
+*
+* @example
+* var functionName = require( '@stdlib/utils/function-name' );
+*
+* var v = functionName( String );
+* // returns 'String'
+*
+* v = functionName( function foo(){} );
+* // returns 'foo'
+*
+* v = functionName( function(){} );
+* // returns '' || 'anonymous'
+*/
+
+// MODULES //
+
+var functionName = require( './function_name.js' );
+
+
+// EXPORTS //
+
+module.exports = functionName;
+
+},{"./function_name.js":357}],359:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isFunction = require( '@stdlib/assert/is-function' );
+var builtin = require( './native.js' );
+var polyfill = require( './polyfill.js' );
+
+
+// MAIN //
+
+var getProto;
+if ( isFunction( Object.getPrototypeOf ) ) {
+	getProto = builtin;
+} else {
+	getProto = polyfill;
+}
+
+
+// EXPORTS //
+
+module.exports = getProto;
+
+},{"./native.js":362,"./polyfill.js":363,"@stdlib/assert/is-function":129}],360:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var getProto = require( './detect.js' );
+
+
+// MAIN //
+
+/**
+* Returns the prototype of a provided object.
+*
+* @param {*} value - input value
+* @returns {(Object|null)} prototype
+*
+* @example
+* var proto = getPrototypeOf( {} );
+* // returns {}
+*/
+function getPrototypeOf( value ) {
+	if (
+		value === null ||
+		value === void 0
+	) {
+		return null;
+	}
+	// In order to ensure consistent ES5/ES6 behavior, cast input value to an object (strings, numbers, booleans); ES5 `Object.getPrototypeOf` throws when provided primitives and ES6 `Object.getPrototypeOf` casts:
+	value = Object( value );
+
+	return getProto( value );
+}
+
+
+// EXPORTS //
+
+module.exports = getPrototypeOf;
+
+},{"./detect.js":359}],361:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Return the prototype of a provided object.
+*
+* @module @stdlib/utils/get-prototype-of
+*
+* @example
+* var getPrototype = require( '@stdlib/utils/get-prototype-of' );
+*
+* var proto = getPrototype( {} );
+* // returns {}
+*/
+
+// MODULES //
+
+var getPrototype = require( './get_prototype_of.js' );
+
+
+// EXPORTS //
+
+module.exports = getPrototype;
+
+},{"./get_prototype_of.js":360}],362:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var getProto = Object.getPrototypeOf;
+
+
+// EXPORTS //
+
+module.exports = getProto;
+
+},{}],363:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var nativeClass = require( '@stdlib/utils/native-class' );
+var getProto = require( './proto.js' );
+
+
+// MAIN //
+
+/**
+* Returns the prototype of a provided object.
+*
+* @private
+* @param {Object} obj - input object
+* @returns {(Object|null)} prototype
+*/
+function getPrototypeOf( obj ) {
+	var proto = getProto( obj );
+	if ( proto || proto === null ) {
+		return proto;
+	}
+	if ( nativeClass( obj.constructor ) === '[object Function]' ) {
+		// May break if the constructor has been tampered with...
+		return obj.constructor.prototype;
+	}
+	if ( obj instanceof Object ) {
+		return Object.prototype;
+	}
+	// Return `null` for objects created via `Object.create( null )`. Also return `null` for cross-realm objects on browsers that lack `__proto__` support, such as IE < 11.
+	return null;
+}
+
+
+// EXPORTS //
+
+module.exports = getPrototypeOf;
+
+},{"./proto.js":364,"@stdlib/utils/native-class":389}],364:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Returns the value of the `__proto__` property.
+*
+* @private
+* @param {Object} obj - input object
+* @returns {*} value of `__proto__` property
+*/
+function getProto( obj ) {
+	// eslint-disable-next-line no-proto
+	return obj.__proto__;
+}
+
+
+// EXPORTS //
+
+module.exports = getProto;
+
+},{}],365:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+/**
+* Returns the global object using code generation.
+*
+* @private
+* @returns {Object} global object
+*/
+function getGlobal() {
+	return new Function( 'return this;' )(); // eslint-disable-line no-new-func
+}
+
+
+// EXPORTS //
+
+module.exports = getGlobal;
+
+},{}],366:[function(require,module,exports){
+(function (global){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var obj = ( typeof global === 'object' ) ? global : null;
+
+
+// EXPORTS //
+
+module.exports = obj;
+
+}).call(this,typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+},{}],367:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Return the global object.
+*
+* @module @stdlib/utils/global
+*
+* @example
+* var getGlobal = require( '@stdlib/utils/global' );
+*
+* var g = getGlobal();
+* // returns {...}
+*/
+
+// MODULES //
+
+var getGlobal = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = getGlobal;
+
+},{"./main.js":368}],368:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isBoolean = require( '@stdlib/assert/is-boolean' ).isPrimitive;
+var getThis = require( './codegen.js' );
+var Self = require( './self.js' );
+var Win = require( './window.js' );
+var Global = require( './global.js' );
+
+
+// MAIN //
+
+/**
+* Returns the global object.
+*
+* ## Notes
+*
+* -   Using code generation is the **most** reliable way to resolve the global object; however, doing so is likely to violate content security policies (CSPs) in, e.g., Chrome Apps and elsewhere.
+*
+* @param {boolean} [codegen=false] - boolean indicating whether to use code generation to resolve the global object
+* @throws {TypeError} must provide a boolean
+* @throws {Error} unable to resolve global object
+* @returns {Object} global object
+*
+* @example
+* var g = getGlobal();
+* // returns {...}
+*/
+function getGlobal( codegen ) {
+	if ( arguments.length ) {
+		if ( !isBoolean( codegen ) ) {
+			throw new TypeError( 'invalid argument. Must provide a boolean primitive. Value: `'+codegen+'`.' );
+		}
+		if ( codegen ) {
+			return getThis();
+		}
+		// Fall through...
+	}
+	// Case: browsers and web workers
+	if ( Self ) {
+		return Self;
+	}
+	// Case: browsers
+	if ( Win ) {
+		return Win;
+	}
+	// Case: Node.js
+	if ( Global ) {
+		return Global;
+	}
+	// Case: unknown
+	throw new Error( 'unexpected error. Unable to resolve global object.' );
+}
+
+
+// EXPORTS //
+
+module.exports = getGlobal;
+
+},{"./codegen.js":365,"./global.js":366,"./self.js":369,"./window.js":370,"@stdlib/assert/is-boolean":109}],369:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var obj = ( typeof self === 'object' ) ? self : null;
+
+
+// EXPORTS //
+
+module.exports = obj;
+
+},{}],370:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var obj = ( typeof window === 'object' ) ? window : null;
+
+
+// EXPORTS //
+
+module.exports = obj;
+
+},{}],371:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Return the first index at which a given element can be found.
+*
+* @module @stdlib/utils/index-of
+*
+* @example
+* var indexOf = require( '@stdlib/utils/index-of' );
+*
+* var arr = [ 4, 3, 2, 1 ];
+* var idx = indexOf( arr, 3 );
+* // returns 1
+*
+* arr = [ 4, 3, 2, 1 ];
+* idx = indexOf( arr, 5 );
+* // returns -1
+*
+* // Using a `fromIndex`:
+* arr = [ 1, 2, 3, 4, 5, 2, 6 ];
+* idx = indexOf( arr, 2, 3 );
+* // returns 5
+*
+* // `fromIndex` which exceeds `array` length:
+* arr = [ 1, 2, 3, 4, 2, 5 ];
+* idx = indexOf( arr, 2, 10 );
+* // returns -1
+*
+* // Negative `fromIndex`:
+* arr = [ 1, 2, 3, 4, 5, 2, 6, 2 ];
+* idx = indexOf( arr, 2, -4 );
+* // returns 5
+*
+* idx = indexOf( arr, 2, -1 );
+* // returns 7
+*
+* // Negative `fromIndex` exceeding input `array` length:
+* arr = [ 1, 2, 3, 4, 5, 2, 6 ];
+* idx = indexOf( arr, 2, -10 );
+* // returns 1
+*
+* // Array-like objects:
+* var str = 'bebop';
+* idx = indexOf( str, 'o' );
+* // returns 3
+*/
+
+// MODULES //
+
+var indexOf = require( './index_of.js' );
+
+
+// EXPORTS //
+
+module.exports = indexOf;
+
+},{"./index_of.js":372}],372:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isnan = require( '@stdlib/assert/is-nan' );
+var isCollection = require( '@stdlib/assert/is-collection' );
+var isString = require( '@stdlib/assert/is-string' ).isPrimitive;
+var isInteger = require( '@stdlib/assert/is-integer' ).isPrimitive;
+
+
+// MAIN //
+
+/**
+* Returns the first index at which a given element can be found.
+*
+* @param {ArrayLike} arr - array-like object
+* @param {*} searchElement - element to find
+* @param {integer} [fromIndex] - starting index (if negative, the start index is determined relative to last element)
+* @throws {TypeError} must provide an array-like object
+* @throws {TypeError} `fromIndex` must be an integer
+* @returns {integer} index or -1
+*
+* @example
+* var arr = [ 4, 3, 2, 1 ];
+* var idx = indexOf( arr, 3 );
+* // returns 1
+*
+* @example
+* var arr = [ 4, 3, 2, 1 ];
+* var idx = indexOf( arr, 5 );
+* // returns -1
+*
+* @example
+* // Using a `fromIndex`:
+* var arr = [ 1, 2, 3, 4, 5, 2, 6 ];
+* var idx = indexOf( arr, 2, 3 );
+* // returns 5
+*
+* @example
+* // `fromIndex` which exceeds `array` length:
+* var arr = [ 1, 2, 3, 4, 2, 5 ];
+* var idx = indexOf( arr, 2, 10 );
+* // returns -1
+*
+* @example
+* // Negative `fromIndex`:
+* var arr = [ 1, 2, 3, 4, 5, 2, 6, 2 ];
+* var idx = indexOf( arr, 2, -4 );
+* // returns 5
+*
+* idx = indexOf( arr, 2, -1 );
+* // returns 7
+*
+* @example
+* // Negative `fromIndex` exceeding input `array` length:
+* var arr = [ 1, 2, 3, 4, 5, 2, 6 ];
+* var idx = indexOf( arr, 2, -10 );
+* // returns 1
+*
+* @example
+* // Array-like objects:
+* var str = 'bebop';
+* var idx = indexOf( str, 'o' );
+* // returns 3
+*/
+function indexOf( arr, searchElement, fromIndex ) {
+	var len;
+	var i;
+	if ( !isCollection( arr ) && !isString( arr ) ) {
+		throw new TypeError( 'invalid argument. First argument must be an array-like object. Value: `' + arr + '`.' );
+	}
+	len = arr.length;
+	if ( len === 0 ) {
+		return -1;
+	}
+	if ( arguments.length === 3 ) {
+		if ( !isInteger( fromIndex ) ) {
+			throw new TypeError( 'invalid argument. `fromIndex` must be an integer. Value: `' + fromIndex + '`.' );
+		}
+		if ( fromIndex >= 0 ) {
+			if ( fromIndex >= len ) {
+				return -1;
+			}
+			i = fromIndex;
+		} else {
+			i = len + fromIndex;
+			if ( i < 0 ) {
+				i = 0;
+			}
+		}
+	} else {
+		i = 0;
+	}
+	// Check for `NaN`...
+	if ( isnan( searchElement ) ) {
+		for ( ; i < len; i++ ) {
+			if ( isnan( arr[i] ) ) {
+				return i;
+			}
+		}
+	} else {
+		for ( ; i < len; i++ ) {
+			if ( arr[ i ] === searchElement ) {
+				return i;
+			}
+		}
+	}
+	return -1;
+}
+
+
+// EXPORTS //
+
+module.exports = indexOf;
+
+},{"@stdlib/assert/is-collection":117,"@stdlib/assert/is-integer":137,"@stdlib/assert/is-nan":145,"@stdlib/assert/is-string":177}],373:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+/**
+* Returns an array of an object's own enumerable property names.
+*
+* ## Notes
+*
+* -   In contrast to the built-in `Object.keys()`, this function returns an empty array if provided `undefined` or `null`, rather than throwing an error.
+*
+* @private
+* @param {*} value - input object
+* @returns {Array} a list of own enumerable property names
+*
+* @example
+* var obj = {
+*     'beep': 'boop',
+*     'foo': 3.14
+* };
+*
+* var k = keys( obj );
+* // e.g., returns [ 'beep', 'foo' ]
+*/
+function keys( value ) {
+	return Object.keys( Object( value ) );
+}
+
+
+// EXPORTS //
+
+module.exports = keys;
+
+},{}],374:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isArguments = require( '@stdlib/assert/is-arguments' );
+var builtin = require( './builtin.js' );
+
+
+// VARIABLES //
+
+var slice = Array.prototype.slice;
+
+
+// MAIN //
+
+/**
+* Returns an array of an object's own enumerable property names.
+*
+* @private
+* @param {*} value - input object
+* @returns {Array} a list of own enumerable property names
+*
+* @example
+* var obj = {
+*     'beep': 'boop',
+*     'foo': 3.14
+* };
+*
+* var k = keys( obj );
+* // e.g., returns [ 'beep', 'foo' ]
+*/
+function keys( value ) {
+	if ( isArguments( value ) ) {
+		return builtin( slice.call( value ) );
+	}
+	return builtin( value );
+}
+
+
+// EXPORTS //
+
+module.exports = keys;
+
+},{"./builtin.js":373,"@stdlib/assert/is-arguments":104}],375:[function(require,module,exports){
+module.exports=[
+	"console",
+	"external",
+	"frame",
+	"frameElement",
+	"frames",
+	"innerHeight",
+	"innerWidth",
+	"outerHeight",
+	"outerWidth",
+	"pageXOffset",
+	"pageYOffset",
+	"parent",
+	"scrollLeft",
+	"scrollTop",
+	"scrollX",
+	"scrollY",
+	"self",
+	"webkitIndexedDB",
+	"webkitStorageInfo",
+	"window"
+]
+
+},{}],376:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var keys = require( './builtin.js' );
+
+
+// FUNCTIONS //
+
+/**
+* Tests the built-in `Object.keys()` implementation when provided `arguments`.
+*
+* @private
+* @returns {boolean} boolean indicating whether the built-in implementation returns the expected number of keys
+*/
+function test() {
+	return ( keys( arguments ) || '' ).length !== 2;
+}
+
+
+// MAIN //
+
+/**
+* Tests whether the built-in `Object.keys()` implementation supports providing `arguments` as an input value.
+*
+* ## Notes
+*
+* -   Safari 5.0 does **not** support `arguments` as an input value.
+*
+* @private
+* @returns {boolean} boolean indicating whether a built-in implementation supports `arguments`
+*/
+function check() {
+	return test( 1, 2 );
+}
+
+
+// EXPORTS //
+
+module.exports = check;
+
+},{"./builtin.js":373}],377:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var hasOwnProp = require( '@stdlib/assert/has-own-property' );
+var indexOf = require( '@stdlib/utils/index-of' );
+var typeOf = require( '@stdlib/utils/type-of' );
+var isConstructorPrototype = require( './is_constructor_prototype.js' );
+var EXCLUDED_KEYS = require( './excluded_keys.json' );
+var win = require( './window.js' );
+
+
+// VARIABLES //
+
+var bool;
+
+
+// FUNCTIONS //
+
+/**
+* Determines whether an environment throws when comparing to the prototype of a value's constructor (e.g., [IE9][1]).
+*
+* [1]: https://stackoverflow.com/questions/7688070/why-is-comparing-the-constructor-property-of-two-windows-unreliable
+*
+* @private
+* @returns {boolean} boolean indicating whether an environment is buggy
+*/
+function check() {
+	var k;
+	if ( typeOf( win ) === 'undefined' ) {
+		return false;
+	}
+	for ( k in win ) { // eslint-disable-line guard-for-in
+		try {
+			if (
+				indexOf( EXCLUDED_KEYS, k ) === -1 &&
+				hasOwnProp( win, k ) &&
+				win[ k ] !== null &&
+				typeOf( win[ k ] ) === 'object'
+			) {
+				isConstructorPrototype( win[ k ] );
+			}
+		} catch ( err ) { // eslint-disable-line no-unused-vars
+			return true;
+		}
+	}
+	return false;
+}
+
+
+// MAIN //
+
+bool = check();
+
+
+// EXPORTS //
+
+module.exports = bool;
+
+},{"./excluded_keys.json":375,"./is_constructor_prototype.js":383,"./window.js":388,"@stdlib/assert/has-own-property":81,"@stdlib/utils/index-of":371,"@stdlib/utils/type-of":410}],378:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var bool = ( typeof Object.keys !== 'undefined' );
+
+
+// EXPORTS //
+
+module.exports = bool;
+
+},{}],379:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isEnumerableProperty = require( '@stdlib/assert/is-enumerable-property' );
+var noop = require( '@stdlib/utils/noop' );
+
+
+// MAIN //
+
+// Note: certain environments treat an object's prototype as enumerable, which, as a matter of convention, it shouldn't be...
+var bool = isEnumerableProperty( noop, 'prototype' );
+
+
+// EXPORTS //
+
+module.exports = bool;
+
+},{"@stdlib/assert/is-enumerable-property":120,"@stdlib/utils/noop":394}],380:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isEnumerableProperty = require( '@stdlib/assert/is-enumerable-property' );
+
+
+// VARIABLES //
+
+var obj = {
+	'toString': null
+};
+
+
+// MAIN //
+
+// Note: certain environments don't allow enumeration of overwritten properties which are considered non-enumerable...
+var bool = !isEnumerableProperty( obj, 'toString' );
+
+
+// EXPORTS //
+
+module.exports = bool;
+
+},{"@stdlib/assert/is-enumerable-property":120}],381:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var bool = ( typeof window !== 'undefined' );
+
+
+// EXPORTS //
+
+module.exports = bool;
+
+},{}],382:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Return an array of an object's own enumerable property names.
+*
+* @module @stdlib/utils/keys
+*
+* @example
+* var keys = require( '@stdlib/utils/keys' );
+*
+* var obj = {
+*     'beep': 'boop',
+*     'foo': 3.14
+* };
+*
+* var k = keys( obj );
+* // e.g., returns [ 'beep', 'foo' ]
+*/
+
+// MODULES //
+
+var keys = require( './main.js' );
+
+
+// EXPORTS //
+
+module.exports = keys;
+
+},{"./main.js":385}],383:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+/**
+* Tests whether a value equals the prototype of its constructor.
+*
+* @private
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether a value equals the prototype of its constructor
+*/
+function isConstructorPrototype( value ) {
+	return ( value.constructor && value.constructor.prototype === value );
+}
+
+
+// EXPORTS //
+
+module.exports = isConstructorPrototype;
+
+},{}],384:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var hasAutomationEqualityBug = require( './has_automation_equality_bug.js' );
+var isConstructorPrototype = require( './is_constructor_prototype.js' );
+var HAS_WINDOW = require( './has_window.js' );
+
+
+// MAIN //
+
+/**
+* Wraps the test for constructor prototype equality to accommodate buggy environments (e.g., environments which throw when testing equality).
+*
+* @private
+* @param {*} value - value to test
+* @returns {boolean} boolean indicating whether a value equals the prototype of its constructor
+*/
+function wrapper( value ) {
+	if ( HAS_WINDOW === false && !hasAutomationEqualityBug ) {
+		return isConstructorPrototype( value );
+	}
+	try {
+		return isConstructorPrototype( value );
+	} catch ( error ) { // eslint-disable-line no-unused-vars
+		return false;
+	}
+}
+
+
+// EXPORTS //
+
+module.exports = wrapper;
+
+},{"./has_automation_equality_bug.js":377,"./has_window.js":381,"./is_constructor_prototype.js":383}],385:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var hasArgumentsBug = require( './has_arguments_bug.js' );
+var HAS_BUILTIN = require( './has_builtin.js' );
+var builtin = require( './builtin.js' );
+var wrapper = require( './builtin_wrapper.js' );
+var polyfill = require( './polyfill.js' );
+
+
+// MAIN //
+
+/**
+* Returns an array of an object's own enumerable property names.
+*
+* @name keys
+* @type {Function}
+* @param {*} value - input object
+* @returns {Array} a list of own enumerable property names
+*
+* @example
+* var obj = {
+*     'beep': 'boop',
+*     'foo': 3.14
+* };
+*
+* var k = keys( obj );
+* // e.g., returns [ 'beep', 'foo' ]
+*/
+var keys;
+if ( HAS_BUILTIN ) {
+	if ( hasArgumentsBug() ) {
+		keys = wrapper;
+	} else {
+		keys = builtin;
+	}
+} else {
+	keys = polyfill;
+}
+
+
+// EXPORTS //
+
+module.exports = keys;
+
+},{"./builtin.js":373,"./builtin_wrapper.js":374,"./has_arguments_bug.js":376,"./has_builtin.js":378,"./polyfill.js":387}],386:[function(require,module,exports){
+module.exports=[
+	"toString",
+	"toLocaleString",
+	"valueOf",
+	"hasOwnProperty",
+	"isPrototypeOf",
+	"propertyIsEnumerable",
+	"constructor"
+]
+
+},{}],387:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isObjectLike = require( '@stdlib/assert/is-object-like' );
+var hasOwnProp = require( '@stdlib/assert/has-own-property' );
+var isArguments = require( '@stdlib/assert/is-arguments' );
+var HAS_ENUM_PROTO_BUG = require( './has_enumerable_prototype_bug.js' );
+var HAS_NON_ENUM_PROPS_BUG = require( './has_non_enumerable_properties_bug.js' );
+var isConstructorPrototype = require( './is_constructor_prototype_wrapper.js' );
+var NON_ENUMERABLE = require( './non_enumerable.json' );
+
+
+// MAIN //
+
+/**
+* Returns an array of an object's own enumerable property names.
+*
+* @private
+* @param {*} value - input object
+* @returns {Array} a list of own enumerable property names
+*
+* @example
+* var obj = {
+*     'beep': 'boop',
+*     'foo': 3.14
+* };
+*
+* var k = keys( obj );
+* // e.g., returns [ 'beep', 'foo' ]
+*/
+function keys( value ) {
+	var skipConstructor;
+	var skipPrototype;
+	var isFcn;
+	var out;
+	var k;
+	var p;
+	var i;
+
+	out = [];
+	if ( isArguments( value ) ) {
+		// Account for environments which treat `arguments` differently...
+		for ( i = 0; i < value.length; i++ ) {
+			out.push( i.toString() );
+		}
+		// Note: yes, we are precluding the `arguments` array-like object from having other enumerable properties; however, this should (1) be very rare and (2) not be encouraged (e.g., doing something like `arguments.a = 'b'`; in certain engines directly manipulating the `arguments` value results in automatic de-optimization).
+		return out;
+	}
+	if ( typeof value === 'string' ) {
+		// Account for environments which do not treat string character indices as "own" properties...
+		if ( value.length > 0 && !hasOwnProp( value, '0' ) ) {
+			for ( i = 0; i < value.length; i++ ) {
+				out.push( i.toString() );
+			}
+		}
+	} else {
+		isFcn = ( typeof value === 'function' );
+		if ( isFcn === false && !isObjectLike( value ) ) {
+			return out;
+		}
+		skipPrototype = ( HAS_ENUM_PROTO_BUG && isFcn );
+	}
+	for ( k in value ) {
+		if ( !( skipPrototype && k === 'prototype' ) && hasOwnProp( value, k ) ) {
+			out.push( String( k ) );
+		}
+	}
+	if ( HAS_NON_ENUM_PROPS_BUG ) {
+		skipConstructor = isConstructorPrototype( value );
+		for ( i = 0; i < NON_ENUMERABLE.length; i++ ) {
+			p = NON_ENUMERABLE[ i ];
+			if ( !( skipConstructor && p === 'constructor' ) && hasOwnProp( value, p ) ) {
+				out.push( String( p ) );
+			}
+		}
+	}
+	return out;
+}
+
+
+// EXPORTS //
+
+module.exports = keys;
+
+},{"./has_enumerable_prototype_bug.js":379,"./has_non_enumerable_properties_bug.js":380,"./is_constructor_prototype_wrapper.js":384,"./non_enumerable.json":386,"@stdlib/assert/has-own-property":81,"@stdlib/assert/is-arguments":104,"@stdlib/assert/is-object-like":159}],388:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var w = ( typeof window === 'undefined' ) ? void 0 : window;
+
+
+// EXPORTS //
+
+module.exports = w;
+
+},{}],389:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Return a string value indicating a specification defined classification of an object.
+*
+* @module @stdlib/utils/native-class
+*
+* @example
+* var nativeClass = require( '@stdlib/utils/native-class' );
+*
+* var str = nativeClass( 'a' );
+* // returns '[object String]'
+*
+* str = nativeClass( 5 );
+* // returns '[object Number]'
+*
+* function Beep() {
+*     return this;
+* }
+* str = nativeClass( new Beep() );
+* // returns '[object Object]'
+*/
+
+// MODULES //
+
+var hasToStringTag = require( '@stdlib/assert/has-tostringtag-support' );
+var builtin = require( './native_class.js' );
+var polyfill = require( './polyfill.js' );
+
+
+// MAIN //
+
+var nativeClass;
+if ( hasToStringTag() ) {
+	nativeClass = polyfill;
+} else {
+	nativeClass = builtin;
+}
+
+
+// EXPORTS //
+
+module.exports = nativeClass;
+
+},{"./native_class.js":390,"./polyfill.js":391,"@stdlib/assert/has-tostringtag-support":87}],390:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var toStr = require( './tostring.js' );
+
+
+// MAIN //
+
+/**
+* Returns a string value indicating a specification defined classification (via the internal property `[[Class]]`) of an object.
+*
+* @param {*} v - input value
+* @returns {string} string value indicating a specification defined classification of the input value
+*
+* @example
+* var str = nativeClass( 'a' );
+* // returns '[object String]'
+*
+* @example
+* var str = nativeClass( 5 );
+* // returns '[object Number]'
+*
+* @example
+* function Beep() {
+*     return this;
+* }
+* var str = nativeClass( new Beep() );
+* // returns '[object Object]'
+*/
+function nativeClass( v ) {
+	return toStr.call( v );
+}
+
+
+// EXPORTS //
+
+module.exports = nativeClass;
+
+},{"./tostring.js":392}],391:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var hasOwnProp = require( '@stdlib/assert/has-own-property' );
+var toStringTag = require( './tostringtag.js' );
+var toStr = require( './tostring.js' );
+
+
+// MAIN //
+
+/**
+* Returns a string value indicating a specification defined classification of an object in environments supporting `Symbol.toStringTag`.
+*
+* @param {*} v - input value
+* @returns {string} string value indicating a specification defined classification of the input value
+*
+* @example
+* var str = nativeClass( 'a' );
+* // returns '[object String]'
+*
+* @example
+* var str = nativeClass( 5 );
+* // returns '[object Number]'
+*
+* @example
+* function Beep() {
+*     return this;
+* }
+* var str = nativeClass( new Beep() );
+* // returns '[object Object]'
+*/
+function nativeClass( v ) {
+	var isOwn;
+	var tag;
+	var out;
+
+	if ( v === null || v === void 0 ) {
+		return toStr.call( v );
+	}
+	tag = v[ toStringTag ];
+	isOwn = hasOwnProp( v, toStringTag );
+
+	// Attempt to override the `toStringTag` property. For built-ins having a `Symbol.toStringTag` property (e.g., `JSON`, `Math`, etc), the `Symbol.toStringTag` property is read-only (e.g., , so we need to wrap in a `try/catch`.
+	try {
+		v[ toStringTag ] = void 0;
+	} catch ( err ) { // eslint-disable-line no-unused-vars
+		return toStr.call( v );
+	}
+	out = toStr.call( v );
+
+	if ( isOwn ) {
+		v[ toStringTag ] = tag;
+	} else {
+		delete v[ toStringTag ];
+	}
+	return out;
+}
+
+
+// EXPORTS //
+
+module.exports = nativeClass;
+
+},{"./tostring.js":392,"./tostringtag.js":393,"@stdlib/assert/has-own-property":81}],392:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var toStr = Object.prototype.toString;
+
+
+// EXPORTS //
+
+module.exports = toStr;
+
+},{}],393:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var toStrTag = ( typeof Symbol === 'function' ) ? Symbol.toStringTag : '';
+
+
+// EXPORTS //
+
+module.exports = toStrTag;
+
+},{}],394:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* No operation.
+*
+* @module @stdlib/utils/noop
+*
+* @example
+* var noop = require( '@stdlib/utils/noop' );
+*
+* noop();
+* // ...does nothing.
+*/
+
+// MODULES //
+
+var noop = require( './noop.js' );
+
+
+// EXPORTS //
+
+module.exports = noop;
+
+},{"./noop.js":395}],395:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* No operation.
+*
+* @example
+* noop();
+* // ...does nothing.
+*/
+function noop() {
+	// Empty function...
+}
+
+
+// EXPORTS //
+
+module.exports = noop;
+
+},{}],396:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// VARIABLES //
+
+var propertyDescriptor = Object.getOwnPropertyDescriptor;
+
+
+// MAIN //
+
+/**
+* Returns a property descriptor for an object's own property.
+*
+* ## Notes
+*
+* -   In contrast to the built-in `Object.getOwnPropertyDescriptor()`, this function returns `null` if provided `undefined` or `null`, rather than throwing an error.
+* -   In contrast to the built-in `Object.getOwnPropertyDescriptor()`, this function returns `null` if an object does not have a provided property, rather than `undefined`.
+*
+* @private
+* @param {*} value - input object
+* @param {(string|symbol)} property - property
+* @returns {(Object|null)} property descriptor or null
+*
+* @example
+* var obj = {
+*     'beep': 'boop',
+*     'foo': 3.14
+* };
+*
+* var desc = getOwnPropertyDescriptor( obj, 'foo' );
+* // returns {'configurable':true,'enumerable':true,'writable':true,'value':3.14}
+*/
+function getOwnPropertyDescriptor( value, property ) {
+	var desc;
+	if ( value === null || value === void 0 ) {
+		return null;
+	}
+	desc = propertyDescriptor( value, property );
+	return ( desc === void 0 ) ? null : desc;
+}
+
+
+// EXPORTS //
+
+module.exports = getOwnPropertyDescriptor;
+
+},{}],397:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var bool = ( typeof Object.getOwnPropertyDescriptor !== 'undefined' );
+
+
+// EXPORTS //
+
+module.exports = bool;
+
+},{}],398:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Return a property descriptor for an object's own property.
+*
+* @module @stdlib/utils/property-descriptor
+*
+* @example
+* var getOwnPropertyDescriptor = require( '@stdlib/utils/property-descriptor' );
+*
+* var obj = {
+*   'foo': 'bar',
+*   'beep': 'boop'
+* };
+*
+* var keys = getOwnPropertyDescriptor( obj, 'foo' );
+* // returns {'configurable':true,'enumerable':true,'writable':true,'value':'bar'}
+*/
+
+// MODULES //
+
+var HAS_BUILTIN = require( './has_builtin.js' );
+var builtin = require( './builtin.js' );
+var polyfill = require( './polyfill.js' );
+
+
+// MAIN //
+
+var main;
+if ( HAS_BUILTIN ) {
+	main = builtin;
+} else {
+	main = polyfill;
+}
+
+
+// EXPORTS //
+
+module.exports = main;
+
+},{"./builtin.js":396,"./has_builtin.js":397,"./polyfill.js":399}],399:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var hasOwnProp = require( '@stdlib/assert/has-own-property' );
+
+
+// MAIN //
+
+/**
+* Returns a property descriptor for an object's own property.
+*
+* ## Notes
+*
+* -   In contrast to the built-in `Object.getOwnPropertyDescriptor()`, this function returns `null` if provided `undefined` or `null`, rather than throwing an error.
+* -   In contrast to the built-in `Object.getOwnPropertyDescriptor()`, this function returns `null` if an object does not have a provided property, rather than `undefined`.
+* -   In environments lacking `Object.getOwnPropertyDescriptor()` support, property descriptors do not exist. In non-supporting environment, if an object has a provided property, this function returns a descriptor object equivalent to that returned in a supporting environment; otherwise, the function returns `null`.
+*
+* @private
+* @param {*} value - input object
+* @param {(string|symbol)} property - property
+* @returns {(Object|null)} property descriptor or null
+*
+* @example
+* var obj = {
+*     'beep': 'boop',
+*     'foo': 3.14
+* };
+*
+* var desc = getOwnPropertyDescriptor( obj, 'foo' );
+* // returns {'configurable':true,'enumerable':true,'writable':true,'value':3.14}
+*/
+function getOwnPropertyDescriptor( value, property ) {
+	if ( hasOwnProp( value, property ) ) {
+		return {
+			'configurable': true,
+			'enumerable': true,
+			'writable': true,
+			'value': value[ property ]
+		};
+	}
+	return null;
+}
+
+
+// EXPORTS //
+
+module.exports = getOwnPropertyDescriptor;
+
+},{"@stdlib/assert/has-own-property":81}],400:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// VARIABLES //
+
+var propertyNames = Object.getOwnPropertyNames;
+
+
+// MAIN //
+
+/**
+* Returns an array of an object's own enumerable and non-enumerable property names.
+*
+* ## Notes
+*
+* -   In contrast to the built-in `Object.getOwnPropertyNames()`, this function returns an empty array if provided `undefined` or `null`, rather than throwing an error.
+*
+* @private
+* @param {*} value - input object
+* @returns {Array} a list of own property names
+*
+* @example
+* var obj = {
+*     'beep': 'boop',
+*     'foo': 3.14
+* };
+*
+* var keys = getOwnPropertyNames( obj );
+* // e.g., returns [ 'beep', 'foo' ]
+*/
+function getOwnPropertyNames( value ) {
+	return propertyNames( Object( value ) );
+}
+
+
+// EXPORTS //
+
+module.exports = getOwnPropertyNames;
+
+},{}],401:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MAIN //
+
+var bool = ( typeof Object.getOwnPropertyNames !== 'undefined' );
+
+
+// EXPORTS //
+
+module.exports = bool;
+
+},{}],402:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Return an array of an object's own enumerable and non-enumerable property names.
+*
+* @module @stdlib/utils/property-names
+*
+* @example
+* var getOwnPropertyNames = require( '@stdlib/utils/property-names' );
+*
+* var keys = getOwnPropertyNames({
+*   'foo': 'bar',
+*   'beep': 'boop'
+* });
+* // e.g., returns [ 'foo', 'beep' ]
+*/
+
+// MODULES //
+
+var HAS_BUILTIN = require( './has_builtin.js' );
+var builtin = require( './builtin.js' );
+var polyfill = require( './polyfill.js' );
+
+
+// MAIN //
+
+var main;
+if ( HAS_BUILTIN ) {
+	main = builtin;
+} else {
+	main = polyfill;
+}
+
+
+// EXPORTS //
+
+module.exports = main;
+
+},{"./builtin.js":400,"./has_builtin.js":401,"./polyfill.js":403}],403:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var keys = require( '@stdlib/utils/keys' );
+
+
+// MAIN //
+
+/**
+* Returns an array of an object's own enumerable and non-enumerable property names.
+*
+* ## Notes
+*
+* -   In contrast to the built-in `Object.getOwnPropertyNames()`, this function returns an empty array if provided `undefined` or `null`, rather than throwing an error.
+* -   In environments lacking support for `Object.getOwnPropertyNames()`, property descriptors are unavailable, and thus all properties can be safely assumed to be enumerable. Hence, we can defer to calling `Object.keys`, which retrieves all own enumerable property names.
+*
+* @private
+* @param {*} value - input object
+* @returns {Array} a list of own property names
+*
+* @example
+* var obj = {
+*     'beep': 'boop',
+*     'foo': 3.14
+* };
+*
+* var keys = getOwnPropertyNames( obj );
+* // e.g., returns [ 'beep', 'foo' ]
+*/
+function getOwnPropertyNames( value ) {
+	return keys( Object( value ) );
+}
+
+
+// EXPORTS //
+
+module.exports = getOwnPropertyNames;
+
+},{"@stdlib/utils/keys":382}],404:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var isString = require( '@stdlib/assert/is-string' ).isPrimitive;
+var reRegExp = require( '@stdlib/regexp/regexp' );
+
+
+// MAIN //
+
+/**
+* Parses a regular expression string and returns a new regular expression.
+*
+* @param {string} str - regular expression string
+* @throws {TypeError} must provide a regular expression string
+* @returns {(RegExp|null)} regular expression or null
+*
+* @example
+* var re = reFromString( '/beep/' );
+* // returns /beep/
+*/
+function reFromString( str ) {
+	if ( !isString( str ) ) {
+		throw new TypeError( 'invalid argument. Must provide a regular expression string. Value: `' + str + '`.' );
+	}
+	// Capture the regular expression pattern and any flags:
+	str = reRegExp().exec( str );
+
+	// Create a new regular expression:
+	return ( str ) ? new RegExp( str[1], str[2] ) : null;
+}
+
+
+// EXPORTS //
+
+module.exports = reFromString;
+
+},{"@stdlib/assert/is-string":177,"@stdlib/regexp/regexp":337}],405:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Create a regular expression from a regular expression string.
+*
+* @module @stdlib/utils/regexp-from-string
+*
+* @example
+* var reFromString = require( '@stdlib/utils/regexp-from-string' );
+*
+* var re = reFromString( '/beep/' );
+* // returns /beep/
+*/
+
+// MODULES //
+
+var reFromString = require( './from_string.js' );
+
+
+// EXPORTS //
+
+module.exports = reFromString;
+
+},{"./from_string.js":404}],406:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var RE = require( './fixtures/re.js' );
+var nodeList = require( './fixtures/nodelist.js' );
+var typedarray = require( './fixtures/typedarray.js' );
+
+
+// MAIN //
+
+/**
+* Checks whether a polyfill is needed when using the `typeof` operator.
+*
+* @private
+* @returns {boolean} boolean indicating whether a polyfill is needed
+*/
+function check() {
+	if (
+		// Chrome 1-12 returns 'function' for regular expression instances (see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/typeof):
+		typeof RE === 'function' ||
+
+		// Safari 8 returns 'object' for typed array and weak map constructors (underscore #1929):
+		typeof typedarray === 'object' ||
+
+		// PhantomJS 1.9 returns 'function' for `NodeList` instances (underscore #2236):
+		typeof nodeList === 'function'
+	) {
+		return true;
+	}
+	return false;
+}
+
+
+// EXPORTS //
+
+module.exports = check;
+
+},{"./fixtures/nodelist.js":407,"./fixtures/re.js":408,"./fixtures/typedarray.js":409}],407:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var getGlobal = require( '@stdlib/utils/global' );
+
+
+// MAIN //
+
+var root = getGlobal();
+var nodeList = root.document && root.document.childNodes;
+
+
+// EXPORTS //
+
+module.exports = nodeList;
+
+},{"@stdlib/utils/global":367}],408:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+var RE = /./;
+
+
+// EXPORTS //
+
+module.exports = RE;
+
+},{}],409:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+var typedarray = Int8Array; // eslint-disable-line stdlib/require-globals
+
+
+// EXPORTS //
+
+module.exports = typedarray;
+
+},{}],410:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+/**
+* Determine a value's type.
+*
+* @module @stdlib/utils/type-of
+*
+* @example
+* var typeOf = require( '@stdlib/utils/type-of' );
+*
+* var str = typeOf( 'a' );
+* // returns 'string'
+*
+* str = typeOf( 5 );
+* // returns 'number'
+*/
+
+// MODULES //
+
+var usePolyfill = require( './check.js' );
+var typeOf = require( './typeof.js' );
+var polyfill = require( './polyfill.js' );
+
+
+// MAIN //
+
+var main = ( usePolyfill() ) ? polyfill : typeOf;
+
+
+// EXPORTS //
+
+module.exports = main;
+
+},{"./check.js":406,"./polyfill.js":411,"./typeof.js":412}],411:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var ctorName = require( '@stdlib/utils/constructor-name' );
+
+
+// MAIN //
+
+/**
+* Determines a value's type.
+*
+* @param {*} v - input value
+* @returns {string} string indicating the value's type
+*/
+function typeOf( v ) {
+	return ctorName( v ).toLowerCase();
+}
+
+
+// EXPORTS //
+
+module.exports = typeOf;
+
+},{"@stdlib/utils/constructor-name":342}],412:[function(require,module,exports){
+/**
+* @license Apache-2.0
+*
+* Copyright (c) 2018 The Stdlib Authors.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+'use strict';
+
+// MODULES //
+
+var ctorName = require( '@stdlib/utils/constructor-name' );
+
+
+// NOTES //
+
+/*
+* Built-in `typeof` operator behavior:
+*
+* ```text
+* typeof null => 'object'
+* typeof undefined => 'undefined'
+* typeof 'a' => 'string'
+* typeof 5 => 'number'
+* typeof NaN => 'number'
+* typeof true => 'boolean'
+* typeof false => 'boolean'
+* typeof {} => 'object'
+* typeof [] => 'object'
+* typeof function foo(){} => 'function'
+* typeof function* foo(){} => 'object'
+* typeof Symbol() => 'symbol'
+* ```
+*
+*/
+
+
+// MAIN //
+
+/**
+* Determines a value's type.
+*
+* @param {*} v - input value
+* @returns {string} string indicating the value's type
+*/
+function typeOf( v ) {
+	var type;
+
+	// Address `typeof null` => `object` (see http://wiki.ecmascript.org/doku.php?id=harmony:typeof_null):
+	if ( v === null ) {
+		return 'null';
+	}
+	type = typeof v;
+
+	// If the `typeof` operator returned something other than `object`, we are done. Otherwise, we need to check for an internal class name or search for a constructor.
+	if ( type === 'object' ) {
+		return ctorName( v ).toLowerCase();
+	}
+	return type;
+}
+
+
+// EXPORTS //
+
+module.exports = typeOf;
+
+},{"@stdlib/utils/constructor-name":342}],413:[function(require,module,exports){
+var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+;(function (exports) {
+	'use strict';
+
+  var Arr = (typeof Uint8Array !== 'undefined')
+    ? Uint8Array
+    : Array
+
+	var PLUS   = '+'.charCodeAt(0)
+	var SLASH  = '/'.charCodeAt(0)
+	var NUMBER = '0'.charCodeAt(0)
+	var LOWER  = 'a'.charCodeAt(0)
+	var UPPER  = 'A'.charCodeAt(0)
+
+	function decode (elt) {
+		var code = elt.charCodeAt(0)
+		if (code === PLUS)
+			return 62 // '+'
+		if (code === SLASH)
+			return 63 // '/'
+		if (code < NUMBER)
+			return -1 //no match
+		if (code < NUMBER + 10)
+			return code - NUMBER + 26 + 26
+		if (code < UPPER + 26)
+			return code - UPPER
+		if (code < LOWER + 26)
+			return code - LOWER + 26
+	}
+
+	function b64ToByteArray (b64) {
+		var i, j, l, tmp, placeHolders, arr
+
+		if (b64.length % 4 > 0) {
+			throw new Error('Invalid string. Length must be a multiple of 4')
+		}
+
+		// the number of equal signs (place holders)
+		// if there are two placeholders, than the two characters before it
+		// represent one byte
+		// if there is only one, then the three characters before it represent 2 bytes
+		// this is just a cheap hack to not do indexOf twice
+		var len = b64.length
+		placeHolders = '=' === b64.charAt(len - 2) ? 2 : '=' === b64.charAt(len - 1) ? 1 : 0
+
+		// base64 is 4/3 + up to two characters of the original data
+		arr = new Arr(b64.length * 3 / 4 - placeHolders)
+
+		// if there are placeholders, only get up to the last complete 4 chars
+		l = placeHolders > 0 ? b64.length - 4 : b64.length
+
+		var L = 0
+
+		function push (v) {
+			arr[L++] = v
+		}
+
+		for (i = 0, j = 0; i < l; i += 4, j += 3) {
+			tmp = (decode(b64.charAt(i)) << 18) | (decode(b64.charAt(i + 1)) << 12) | (decode(b64.charAt(i + 2)) << 6) | decode(b64.charAt(i + 3))
+			push((tmp & 0xFF0000) >> 16)
+			push((tmp & 0xFF00) >> 8)
+			push(tmp & 0xFF)
+		}
+
+		if (placeHolders === 2) {
+			tmp = (decode(b64.charAt(i)) << 2) | (decode(b64.charAt(i + 1)) >> 4)
+			push(tmp & 0xFF)
+		} else if (placeHolders === 1) {
+			tmp = (decode(b64.charAt(i)) << 10) | (decode(b64.charAt(i + 1)) << 4) | (decode(b64.charAt(i + 2)) >> 2)
+			push((tmp >> 8) & 0xFF)
+			push(tmp & 0xFF)
+		}
+
+		return arr
+	}
+
+	function uint8ToBase64 (uint8) {
+		var i,
+			extraBytes = uint8.length % 3, // if we have 1 byte left, pad 2 bytes
+			output = "",
+			temp, length
+
+		function encode (num) {
+			return lookup.charAt(num)
+		}
+
+		function tripletToBase64 (num) {
+			return encode(num >> 18 & 0x3F) + encode(num >> 12 & 0x3F) + encode(num >> 6 & 0x3F) + encode(num & 0x3F)
+		}
+
+		// go through the array every three bytes, we'll deal with trailing stuff later
+		for (i = 0, length = uint8.length - extraBytes; i < length; i += 3) {
+			temp = (uint8[i] << 16) + (uint8[i + 1] << 8) + (uint8[i + 2])
+			output += tripletToBase64(temp)
+		}
+
+		// pad the end with zeros, but make sure to not forget the extra bytes
+		switch (extraBytes) {
+			case 1:
+				temp = uint8[uint8.length - 1]
+				output += encode(temp >> 2)
+				output += encode((temp << 4) & 0x3F)
+				output += '=='
+				break
+			case 2:
+				temp = (uint8[uint8.length - 2] << 8) + (uint8[uint8.length - 1])
+				output += encode(temp >> 10)
+				output += encode((temp >> 4) & 0x3F)
+				output += encode((temp << 2) & 0x3F)
+				output += '='
+				break
+		}
+
+		return output
+	}
+
+	exports.toByteArray = b64ToByteArray
+	exports.fromByteArray = uint8ToBase64
+}(typeof exports === 'undefined' ? (this.base64js = {}) : exports))
+
+},{}],414:[function(require,module,exports){
+
+},{}],415:[function(require,module,exports){
+/*!
+ * The buffer module from node.js, for the browser.
+ *
+ * @author   Feross Aboukhadijeh <http://feross.org>
+ * @license  MIT
+ */
+
+var base64 = require('base64-js')
+var ieee754 = require('ieee754')
+var isArray = require('is-array')
+
+exports.Buffer = Buffer
+exports.SlowBuffer = Buffer
+exports.INSPECT_MAX_BYTES = 50
+Buffer.poolSize = 8192 // not used by this implementation
+
+var kMaxLength = 0x3fffffff
+
+/**
+ * If `Buffer.TYPED_ARRAY_SUPPORT`:
+ *   === true    Use Uint8Array implementation (fastest)
+ *   === false   Use Object implementation (most compatible, even IE6)
+ *
+ * Browsers that support typed arrays are IE 10+, Firefox 4+, Chrome 7+, Safari 5.1+,
+ * Opera 11.6+, iOS 4.2+.
+ *
+ * Note:
+ *
+ * - Implementation must support adding new properties to `Uint8Array` instances.
+ *   Firefox 4-29 lacked support, fixed in Firefox 30+.
+ *   See: https://bugzilla.mozilla.org/show_bug.cgi?id=695438.
+ *
+ *  - Chrome 9-10 is missing the `TypedArray.prototype.subarray` function.
+ *
+ *  - IE10 has a broken `TypedArray.prototype.subarray` function which returns arrays of
+ *    incorrect length in some situations.
+ *
+ * We detect these buggy browsers and set `Buffer.TYPED_ARRAY_SUPPORT` to `false` so they will
+ * get the Object implementation, which is slower but will work correctly.
+ */
+Buffer.TYPED_ARRAY_SUPPORT = (function () {
+  try {
+    var buf = new ArrayBuffer(0)
+    var arr = new Uint8Array(buf)
+    arr.foo = function () { return 42 }
+    return 42 === arr.foo() && // typed array instances can be augmented
+        typeof arr.subarray === 'function' && // chrome 9-10 lack `subarray`
+        new Uint8Array(1).subarray(1, 1).byteLength === 0 // ie10 has broken `subarray`
+  } catch (e) {
+    return false
+  }
+})()
+
+/**
+ * Class: Buffer
+ * =============
+ *
+ * The Buffer constructor returns instances of `Uint8Array` that are augmented
+ * with function properties for all the node `Buffer` API functions. We use
+ * `Uint8Array` so that square bracket notation works as expected -- it returns
+ * a single octet.
+ *
+ * By augmenting the instances, we can avoid modifying the `Uint8Array`
+ * prototype.
+ */
+function Buffer (subject, encoding, noZero) {
+  if (!(this instanceof Buffer))
+    return new Buffer(subject, encoding, noZero)
+
+  var type = typeof subject
+
+  // Find the length
+  var length
+  if (type === 'number')
+    length = subject > 0 ? subject >>> 0 : 0
+  else if (type === 'string') {
+    if (encoding === 'base64')
+      subject = base64clean(subject)
+    length = Buffer.byteLength(subject, encoding)
+  } else if (type === 'object' && subject !== null) { // assume object is array-like
+    if (subject.type === 'Buffer' && isArray(subject.data))
+      subject = subject.data
+    length = +subject.length > 0 ? Math.floor(+subject.length) : 0
+  } else
+    throw new TypeError('must start with number, buffer, array or string')
+
+  if (this.length > kMaxLength)
+    throw new RangeError('Attempt to allocate Buffer larger than maximum ' +
+      'size: 0x' + kMaxLength.toString(16) + ' bytes')
+
+  var buf
+  if (Buffer.TYPED_ARRAY_SUPPORT) {
+    // Preferred: Return an augmented `Uint8Array` instance for best performance
+    buf = Buffer._augment(new Uint8Array(length))
+  } else {
+    // Fallback: Return THIS instance of Buffer (created by `new`)
+    buf = this
+    buf.length = length
+    buf._isBuffer = true
+  }
+
+  var i
+  if (Buffer.TYPED_ARRAY_SUPPORT && typeof subject.byteLength === 'number') {
+    // Speed optimization -- use set if we're copying from a typed array
+    buf._set(subject)
+  } else if (isArrayish(subject)) {
+    // Treat array-ish objects as a byte array
+    if (Buffer.isBuffer(subject)) {
+      for (i = 0; i < length; i++)
+        buf[i] = subject.readUInt8(i)
+    } else {
+      for (i = 0; i < length; i++)
+        buf[i] = ((subject[i] % 256) + 256) % 256
+    }
+  } else if (type === 'string') {
+    buf.write(subject, 0, encoding)
+  } else if (type === 'number' && !Buffer.TYPED_ARRAY_SUPPORT && !noZero) {
+    for (i = 0; i < length; i++) {
+      buf[i] = 0
+    }
+  }
+
+  return buf
+}
+
+Buffer.isBuffer = function (b) {
+  return !!(b != null && b._isBuffer)
+}
+
+Buffer.compare = function (a, b) {
+  if (!Buffer.isBuffer(a) || !Buffer.isBuffer(b))
+    throw new TypeError('Arguments must be Buffers')
+
+  var x = a.length
+  var y = b.length
+  for (var i = 0, len = Math.min(x, y); i < len && a[i] === b[i]; i++) {}
+  if (i !== len) {
+    x = a[i]
+    y = b[i]
+  }
+  if (x < y) return -1
+  if (y < x) return 1
+  return 0
+}
+
+Buffer.isEncoding = function (encoding) {
+  switch (String(encoding).toLowerCase()) {
+    case 'hex':
+    case 'utf8':
+    case 'utf-8':
+    case 'ascii':
+    case 'binary':
+    case 'base64':
+    case 'raw':
+    case 'ucs2':
+    case 'ucs-2':
+    case 'utf16le':
+    case 'utf-16le':
+      return true
+    default:
+      return false
+  }
+}
+
+Buffer.concat = function (list, totalLength) {
+  if (!isArray(list)) throw new TypeError('Usage: Buffer.concat(list[, length])')
+
+  if (list.length === 0) {
+    return new Buffer(0)
+  } else if (list.length === 1) {
+    return list[0]
+  }
+
+  var i
+  if (totalLength === undefined) {
+    totalLength = 0
+    for (i = 0; i < list.length; i++) {
+      totalLength += list[i].length
+    }
+  }
+
+  var buf = new Buffer(totalLength)
+  var pos = 0
+  for (i = 0; i < list.length; i++) {
+    var item = list[i]
+    item.copy(buf, pos)
+    pos += item.length
+  }
+  return buf
+}
+
+Buffer.byteLength = function (str, encoding) {
+  var ret
+  str = str + ''
+  switch (encoding || 'utf8') {
+    case 'ascii':
+    case 'binary':
+    case 'raw':
+      ret = str.length
+      break
+    case 'ucs2':
+    case 'ucs-2':
+    case 'utf16le':
+    case 'utf-16le':
+      ret = str.length * 2
+      break
+    case 'hex':
+      ret = str.length >>> 1
+      break
+    case 'utf8':
+    case 'utf-8':
+      ret = utf8ToBytes(str).length
+      break
+    case 'base64':
+      ret = base64ToBytes(str).length
+      break
+    default:
+      ret = str.length
+  }
+  return ret
+}
+
+// pre-set for values that may exist in the future
+Buffer.prototype.length = undefined
+Buffer.prototype.parent = undefined
+
+// toString(encoding, start=0, end=buffer.length)
+Buffer.prototype.toString = function (encoding, start, end) {
+  var loweredCase = false
+
+  start = start >>> 0
+  end = end === undefined || end === Infinity ? this.length : end >>> 0
+
+  if (!encoding) encoding = 'utf8'
+  if (start < 0) start = 0
+  if (end > this.length) end = this.length
+  if (end <= start) return ''
+
+  while (true) {
+    switch (encoding) {
+      case 'hex':
+        return hexSlice(this, start, end)
+
+      case 'utf8':
+      case 'utf-8':
+        return utf8Slice(this, start, end)
+
+      case 'ascii':
+        return asciiSlice(this, start, end)
+
+      case 'binary':
+        return binarySlice(this, start, end)
+
+      case 'base64':
+        return base64Slice(this, start, end)
+
+      case 'ucs2':
+      case 'ucs-2':
+      case 'utf16le':
+      case 'utf-16le':
+        return utf16leSlice(this, start, end)
+
+      default:
+        if (loweredCase)
+          throw new TypeError('Unknown encoding: ' + encoding)
+        encoding = (encoding + '').toLowerCase()
+        loweredCase = true
+    }
+  }
+}
+
+Buffer.prototype.equals = function (b) {
+  if(!Buffer.isBuffer(b)) throw new TypeError('Argument must be a Buffer')
+  return Buffer.compare(this, b) === 0
+}
+
+Buffer.prototype.inspect = function () {
+  var str = ''
+  var max = exports.INSPECT_MAX_BYTES
+  if (this.length > 0) {
+    str = this.toString('hex', 0, max).match(/.{2}/g).join(' ')
+    if (this.length > max)
+      str += ' ... '
+  }
+  return '<Buffer ' + str + '>'
+}
+
+Buffer.prototype.compare = function (b) {
+  if (!Buffer.isBuffer(b)) throw new TypeError('Argument must be a Buffer')
+  return Buffer.compare(this, b)
+}
+
+// `get` will be removed in Node 0.13+
+Buffer.prototype.get = function (offset) {
+  console.log('.get() is deprecated. Access using array indexes instead.')
+  return this.readUInt8(offset)
+}
+
+// `set` will be removed in Node 0.13+
+Buffer.prototype.set = function (v, offset) {
+  console.log('.set() is deprecated. Access using array indexes instead.')
+  return this.writeUInt8(v, offset)
+}
+
+function hexWrite (buf, string, offset, length) {
+  offset = Number(offset) || 0
+  var remaining = buf.length - offset
+  if (!length) {
+    length = remaining
+  } else {
+    length = Number(length)
+    if (length > remaining) {
+      length = remaining
+    }
+  }
+
+  // must be an even number of digits
+  var strLen = string.length
+  if (strLen % 2 !== 0) throw new Error('Invalid hex string')
+
+  if (length > strLen / 2) {
+    length = strLen / 2
+  }
+  for (var i = 0; i < length; i++) {
+    var byte = parseInt(string.substr(i * 2, 2), 16)
+    if (isNaN(byte)) throw new Error('Invalid hex string')
+    buf[offset + i] = byte
+  }
+  return i
+}
+
+function utf8Write (buf, string, offset, length) {
+  var charsWritten = blitBuffer(utf8ToBytes(string), buf, offset, length)
+  return charsWritten
+}
+
+function asciiWrite (buf, string, offset, length) {
+  var charsWritten = blitBuffer(asciiToBytes(string), buf, offset, length)
+  return charsWritten
+}
+
+function binaryWrite (buf, string, offset, length) {
+  return asciiWrite(buf, string, offset, length)
+}
+
+function base64Write (buf, string, offset, length) {
+  var charsWritten = blitBuffer(base64ToBytes(string), buf, offset, length)
+  return charsWritten
+}
+
+function utf16leWrite (buf, string, offset, length) {
+  var charsWritten = blitBuffer(utf16leToBytes(string), buf, offset, length, 2)
+  return charsWritten
+}
+
+Buffer.prototype.write = function (string, offset, length, encoding) {
+  // Support both (string, offset, length, encoding)
+  // and the legacy (string, encoding, offset, length)
+  if (isFinite(offset)) {
+    if (!isFinite(length)) {
+      encoding = length
+      length = undefined
+    }
+  } else {  // legacy
+    var swap = encoding
+    encoding = offset
+    offset = length
+    length = swap
+  }
+
+  offset = Number(offset) || 0
+  var remaining = this.length - offset
+  if (!length) {
+    length = remaining
+  } else {
+    length = Number(length)
+    if (length > remaining) {
+      length = remaining
+    }
+  }
+  encoding = String(encoding || 'utf8').toLowerCase()
+
+  var ret
+  switch (encoding) {
+    case 'hex':
+      ret = hexWrite(this, string, offset, length)
+      break
+    case 'utf8':
+    case 'utf-8':
+      ret = utf8Write(this, string, offset, length)
+      break
+    case 'ascii':
+      ret = asciiWrite(this, string, offset, length)
+      break
+    case 'binary':
+      ret = binaryWrite(this, string, offset, length)
+      break
+    case 'base64':
+      ret = base64Write(this, string, offset, length)
+      break
+    case 'ucs2':
+    case 'ucs-2':
+    case 'utf16le':
+    case 'utf-16le':
+      ret = utf16leWrite(this, string, offset, length)
+      break
+    default:
+      throw new TypeError('Unknown encoding: ' + encoding)
+  }
+  return ret
+}
+
+Buffer.prototype.toJSON = function () {
+  return {
+    type: 'Buffer',
+    data: Array.prototype.slice.call(this._arr || this, 0)
+  }
+}
+
+function base64Slice (buf, start, end) {
+  if (start === 0 && end === buf.length) {
+    return base64.fromByteArray(buf)
+  } else {
+    return base64.fromByteArray(buf.slice(start, end))
+  }
+}
+
+function utf8Slice (buf, start, end) {
+  var res = ''
+  var tmp = ''
+  end = Math.min(buf.length, end)
+
+  for (var i = start; i < end; i++) {
+    if (buf[i] <= 0x7F) {
+      res += decodeUtf8Char(tmp) + String.fromCharCode(buf[i])
+      tmp = ''
+    } else {
+      tmp += '%' + buf[i].toString(16)
+    }
+  }
+
+  return res + decodeUtf8Char(tmp)
+}
+
+function asciiSlice (buf, start, end) {
+  var ret = ''
+  end = Math.min(buf.length, end)
+
+  for (var i = start; i < end; i++) {
+    ret += String.fromCharCode(buf[i])
+  }
+  return ret
+}
+
+function binarySlice (buf, start, end) {
+  return asciiSlice(buf, start, end)
+}
+
+function hexSlice (buf, start, end) {
+  var len = buf.length
+
+  if (!start || start < 0) start = 0
+  if (!end || end < 0 || end > len) end = len
+
+  var out = ''
+  for (var i = start; i < end; i++) {
+    out += toHex(buf[i])
+  }
+  return out
+}
+
+function utf16leSlice (buf, start, end) {
+  var bytes = buf.slice(start, end)
+  var res = ''
+  for (var i = 0; i < bytes.length; i += 2) {
+    res += String.fromCharCode(bytes[i] + bytes[i + 1] * 256)
+  }
+  return res
+}
+
+Buffer.prototype.slice = function (start, end) {
+  var len = this.length
+  start = ~~start
+  end = end === undefined ? len : ~~end
+
+  if (start < 0) {
+    start += len;
+    if (start < 0)
+      start = 0
+  } else if (start > len) {
+    start = len
+  }
+
+  if (end < 0) {
+    end += len
+    if (end < 0)
+      end = 0
+  } else if (end > len) {
+    end = len
+  }
+
+  if (end < start)
+    end = start
+
+  if (Buffer.TYPED_ARRAY_SUPPORT) {
+    return Buffer._augment(this.subarray(start, end))
+  } else {
+    var sliceLen = end - start
+    var newBuf = new Buffer(sliceLen, undefined, true)
+    for (var i = 0; i < sliceLen; i++) {
+      newBuf[i] = this[i + start]
+    }
+    return newBuf
+  }
+}
+
+/*
+ * Need to make sure that buffer isn't trying to write out of bounds.
+ */
+function checkOffset (offset, ext, length) {
+  if ((offset % 1) !== 0 || offset < 0)
+    throw new RangeError('offset is not uint')
+  if (offset + ext > length)
+    throw new RangeError('Trying to access beyond buffer length')
+}
+
+Buffer.prototype.readUInt8 = function (offset, noAssert) {
+  if (!noAssert)
+    checkOffset(offset, 1, this.length)
+  return this[offset]
+}
+
+Buffer.prototype.readUInt16LE = function (offset, noAssert) {
+  if (!noAssert)
+    checkOffset(offset, 2, this.length)
+  return this[offset] | (this[offset + 1] << 8)
+}
+
+Buffer.prototype.readUInt16BE = function (offset, noAssert) {
+  if (!noAssert)
+    checkOffset(offset, 2, this.length)
+  return (this[offset] << 8) | this[offset + 1]
+}
+
+Buffer.prototype.readUInt32LE = function (offset, noAssert) {
+  if (!noAssert)
+    checkOffset(offset, 4, this.length)
+
+  return ((this[offset]) |
+      (this[offset + 1] << 8) |
+      (this[offset + 2] << 16)) +
+      (this[offset + 3] * 0x1000000)
+}
+
+Buffer.prototype.readUInt32BE = function (offset, noAssert) {
+  if (!noAssert)
+    checkOffset(offset, 4, this.length)
+
+  return (this[offset] * 0x1000000) +
+      ((this[offset + 1] << 16) |
+      (this[offset + 2] << 8) |
+      this[offset + 3])
+}
+
+Buffer.prototype.readInt8 = function (offset, noAssert) {
+  if (!noAssert)
+    checkOffset(offset, 1, this.length)
+  if (!(this[offset] & 0x80))
+    return (this[offset])
+  return ((0xff - this[offset] + 1) * -1)
+}
+
+Buffer.prototype.readInt16LE = function (offset, noAssert) {
+  if (!noAssert)
+    checkOffset(offset, 2, this.length)
+  var val = this[offset] | (this[offset + 1] << 8)
+  return (val & 0x8000) ? val | 0xFFFF0000 : val
+}
+
+Buffer.prototype.readInt16BE = function (offset, noAssert) {
+  if (!noAssert)
+    checkOffset(offset, 2, this.length)
+  var val = this[offset + 1] | (this[offset] << 8)
+  return (val & 0x8000) ? val | 0xFFFF0000 : val
+}
+
+Buffer.prototype.readInt32LE = function (offset, noAssert) {
+  if (!noAssert)
+    checkOffset(offset, 4, this.length)
+
+  return (this[offset]) |
+      (this[offset + 1] << 8) |
+      (this[offset + 2] << 16) |
+      (this[offset + 3] << 24)
+}
+
+Buffer.prototype.readInt32BE = function (offset, noAssert) {
+  if (!noAssert)
+    checkOffset(offset, 4, this.length)
+
+  return (this[offset] << 24) |
+      (this[offset + 1] << 16) |
+      (this[offset + 2] << 8) |
+      (this[offset + 3])
+}
+
+Buffer.prototype.readFloatLE = function (offset, noAssert) {
+  if (!noAssert)
+    checkOffset(offset, 4, this.length)
+  return ieee754.read(this, offset, true, 23, 4)
+}
+
+Buffer.prototype.readFloatBE = function (offset, noAssert) {
+  if (!noAssert)
+    checkOffset(offset, 4, this.length)
+  return ieee754.read(this, offset, false, 23, 4)
+}
+
+Buffer.prototype.readDoubleLE = function (offset, noAssert) {
+  if (!noAssert)
+    checkOffset(offset, 8, this.length)
+  return ieee754.read(this, offset, true, 52, 8)
+}
+
+Buffer.prototype.readDoubleBE = function (offset, noAssert) {
+  if (!noAssert)
+    checkOffset(offset, 8, this.length)
+  return ieee754.read(this, offset, false, 52, 8)
+}
+
+function checkInt (buf, value, offset, ext, max, min) {
+  if (!Buffer.isBuffer(buf)) throw new TypeError('buffer must be a Buffer instance')
+  if (value > max || value < min) throw new TypeError('value is out of bounds')
+  if (offset + ext > buf.length) throw new TypeError('index out of range')
+}
+
+Buffer.prototype.writeUInt8 = function (value, offset, noAssert) {
+  value = +value
+  offset = offset >>> 0
+  if (!noAssert)
+    checkInt(this, value, offset, 1, 0xff, 0)
+  if (!Buffer.TYPED_ARRAY_SUPPORT) value = Math.floor(value)
+  this[offset] = value
+  return offset + 1
+}
+
+function objectWriteUInt16 (buf, value, offset, littleEndian) {
+  if (value < 0) value = 0xffff + value + 1
+  for (var i = 0, j = Math.min(buf.length - offset, 2); i < j; i++) {
+    buf[offset + i] = (value & (0xff << (8 * (littleEndian ? i : 1 - i)))) >>>
+      (littleEndian ? i : 1 - i) * 8
+  }
+}
+
+Buffer.prototype.writeUInt16LE = function (value, offset, noAssert) {
+  value = +value
+  offset = offset >>> 0
+  if (!noAssert)
+    checkInt(this, value, offset, 2, 0xffff, 0)
+  if (Buffer.TYPED_ARRAY_SUPPORT) {
+    this[offset] = value
+    this[offset + 1] = (value >>> 8)
+  } else objectWriteUInt16(this, value, offset, true)
+  return offset + 2
+}
+
+Buffer.prototype.writeUInt16BE = function (value, offset, noAssert) {
+  value = +value
+  offset = offset >>> 0
+  if (!noAssert)
+    checkInt(this, value, offset, 2, 0xffff, 0)
+  if (Buffer.TYPED_ARRAY_SUPPORT) {
+    this[offset] = (value >>> 8)
+    this[offset + 1] = value
+  } else objectWriteUInt16(this, value, offset, false)
+  return offset + 2
+}
+
+function objectWriteUInt32 (buf, value, offset, littleEndian) {
+  if (value < 0) value = 0xffffffff + value + 1
+  for (var i = 0, j = Math.min(buf.length - offset, 4); i < j; i++) {
+    buf[offset + i] = (value >>> (littleEndian ? i : 3 - i) * 8) & 0xff
+  }
+}
+
+Buffer.prototype.writeUInt32LE = function (value, offset, noAssert) {
+  value = +value
+  offset = offset >>> 0
+  if (!noAssert)
+    checkInt(this, value, offset, 4, 0xffffffff, 0)
+  if (Buffer.TYPED_ARRAY_SUPPORT) {
+    this[offset + 3] = (value >>> 24)
+    this[offset + 2] = (value >>> 16)
+    this[offset + 1] = (value >>> 8)
+    this[offset] = value
+  } else objectWriteUInt32(this, value, offset, true)
+  return offset + 4
+}
+
+Buffer.prototype.writeUInt32BE = function (value, offset, noAssert) {
+  value = +value
+  offset = offset >>> 0
+  if (!noAssert)
+    checkInt(this, value, offset, 4, 0xffffffff, 0)
+  if (Buffer.TYPED_ARRAY_SUPPORT) {
+    this[offset] = (value >>> 24)
+    this[offset + 1] = (value >>> 16)
+    this[offset + 2] = (value >>> 8)
+    this[offset + 3] = value
+  } else objectWriteUInt32(this, value, offset, false)
+  return offset + 4
+}
+
+Buffer.prototype.writeInt8 = function (value, offset, noAssert) {
+  value = +value
+  offset = offset >>> 0
+  if (!noAssert)
+    checkInt(this, value, offset, 1, 0x7f, -0x80)
+  if (!Buffer.TYPED_ARRAY_SUPPORT) value = Math.floor(value)
+  if (value < 0) value = 0xff + value + 1
+  this[offset] = value
+  return offset + 1
+}
+
+Buffer.prototype.writeInt16LE = function (value, offset, noAssert) {
+  value = +value
+  offset = offset >>> 0
+  if (!noAssert)
+    checkInt(this, value, offset, 2, 0x7fff, -0x8000)
+  if (Buffer.TYPED_ARRAY_SUPPORT) {
+    this[offset] = value
+    this[offset + 1] = (value >>> 8)
+  } else objectWriteUInt16(this, value, offset, true)
+  return offset + 2
+}
+
+Buffer.prototype.writeInt16BE = function (value, offset, noAssert) {
+  value = +value
+  offset = offset >>> 0
+  if (!noAssert)
+    checkInt(this, value, offset, 2, 0x7fff, -0x8000)
+  if (Buffer.TYPED_ARRAY_SUPPORT) {
+    this[offset] = (value >>> 8)
+    this[offset + 1] = value
+  } else objectWriteUInt16(this, value, offset, false)
+  return offset + 2
+}
+
+Buffer.prototype.writeInt32LE = function (value, offset, noAssert) {
+  value = +value
+  offset = offset >>> 0
+  if (!noAssert)
+    checkInt(this, value, offset, 4, 0x7fffffff, -0x80000000)
+  if (Buffer.TYPED_ARRAY_SUPPORT) {
+    this[offset] = value
+    this[offset + 1] = (value >>> 8)
+    this[offset + 2] = (value >>> 16)
+    this[offset + 3] = (value >>> 24)
+  } else objectWriteUInt32(this, value, offset, true)
+  return offset + 4
+}
+
+Buffer.prototype.writeInt32BE = function (value, offset, noAssert) {
+  value = +value
+  offset = offset >>> 0
+  if (!noAssert)
+    checkInt(this, value, offset, 4, 0x7fffffff, -0x80000000)
+  if (value < 0) value = 0xffffffff + value + 1
+  if (Buffer.TYPED_ARRAY_SUPPORT) {
+    this[offset] = (value >>> 24)
+    this[offset + 1] = (value >>> 16)
+    this[offset + 2] = (value >>> 8)
+    this[offset + 3] = value
+  } else objectWriteUInt32(this, value, offset, false)
+  return offset + 4
+}
+
+function checkIEEE754 (buf, value, offset, ext, max, min) {
+  if (value > max || value < min) throw new TypeError('value is out of bounds')
+  if (offset + ext > buf.length) throw new TypeError('index out of range')
+}
+
+function writeFloat (buf, value, offset, littleEndian, noAssert) {
+  if (!noAssert)
+    checkIEEE754(buf, value, offset, 4, 3.4028234663852886e+38, -3.4028234663852886e+38)
+  ieee754.write(buf, value, offset, littleEndian, 23, 4)
+  return offset + 4
+}
+
+Buffer.prototype.writeFloatLE = function (value, offset, noAssert) {
+  return writeFloat(this, value, offset, true, noAssert)
+}
+
+Buffer.prototype.writeFloatBE = function (value, offset, noAssert) {
+  return writeFloat(this, value, offset, false, noAssert)
+}
+
+function writeDouble (buf, value, offset, littleEndian, noAssert) {
+  if (!noAssert)
+    checkIEEE754(buf, value, offset, 8, 1.7976931348623157E+308, -1.7976931348623157E+308)
+  ieee754.write(buf, value, offset, littleEndian, 52, 8)
+  return offset + 8
+}
+
+Buffer.prototype.writeDoubleLE = function (value, offset, noAssert) {
+  return writeDouble(this, value, offset, true, noAssert)
+}
+
+Buffer.prototype.writeDoubleBE = function (value, offset, noAssert) {
+  return writeDouble(this, value, offset, false, noAssert)
+}
+
+// copy(targetBuffer, targetStart=0, sourceStart=0, sourceEnd=buffer.length)
+Buffer.prototype.copy = function (target, target_start, start, end) {
+  var source = this
+
+  if (!start) start = 0
+  if (!end && end !== 0) end = this.length
+  if (!target_start) target_start = 0
+
+  // Copy 0 bytes; we're done
+  if (end === start) return
+  if (target.length === 0 || source.length === 0) return
+
+  // Fatal error conditions
+  if (end < start) throw new TypeError('sourceEnd < sourceStart')
+  if (target_start < 0 || target_start >= target.length)
+    throw new TypeError('targetStart out of bounds')
+  if (start < 0 || start >= source.length) throw new TypeError('sourceStart out of bounds')
+  if (end < 0 || end > source.length) throw new TypeError('sourceEnd out of bounds')
+
+  // Are we oob?
+  if (end > this.length)
+    end = this.length
+  if (target.length - target_start < end - start)
+    end = target.length - target_start + start
+
+  var len = end - start
+
+  if (len < 1000 || !Buffer.TYPED_ARRAY_SUPPORT) {
+    for (var i = 0; i < len; i++) {
+      target[i + target_start] = this[i + start]
+    }
+  } else {
+    target._set(this.subarray(start, start + len), target_start)
+  }
+}
+
+// fill(value, start=0, end=buffer.length)
+Buffer.prototype.fill = function (value, start, end) {
+  if (!value) value = 0
+  if (!start) start = 0
+  if (!end) end = this.length
+
+  if (end < start) throw new TypeError('end < start')
+
+  // Fill 0 bytes; we're done
+  if (end === start) return
+  if (this.length === 0) return
+
+  if (start < 0 || start >= this.length) throw new TypeError('start out of bounds')
+  if (end < 0 || end > this.length) throw new TypeError('end out of bounds')
+
+  var i
+  if (typeof value === 'number') {
+    for (i = start; i < end; i++) {
+      this[i] = value
+    }
+  } else {
+    var bytes = utf8ToBytes(value.toString())
+    var len = bytes.length
+    for (i = start; i < end; i++) {
+      this[i] = bytes[i % len]
+    }
+  }
+
+  return this
+}
+
+/**
+ * Creates a new `ArrayBuffer` with the *copied* memory of the buffer instance.
+ * Added in Node 0.12. Only available in browsers that support ArrayBuffer.
+ */
+Buffer.prototype.toArrayBuffer = function () {
+  if (typeof Uint8Array !== 'undefined') {
+    if (Buffer.TYPED_ARRAY_SUPPORT) {
+      return (new Buffer(this)).buffer
+    } else {
+      var buf = new Uint8Array(this.length)
+      for (var i = 0, len = buf.length; i < len; i += 1) {
+        buf[i] = this[i]
+      }
+      return buf.buffer
+    }
+  } else {
+    throw new TypeError('Buffer.toArrayBuffer not supported in this browser')
+  }
+}
+
+// HELPER FUNCTIONS
+// ================
+
+var BP = Buffer.prototype
+
+/**
+ * Augment a Uint8Array *instance* (not the Uint8Array class!) with Buffer methods
+ */
+Buffer._augment = function (arr) {
+  arr.constructor = Buffer
+  arr._isBuffer = true
+
+  // save reference to original Uint8Array get/set methods before overwriting
+  arr._get = arr.get
+  arr._set = arr.set
+
+  // deprecated, will be removed in node 0.13+
+  arr.get = BP.get
+  arr.set = BP.set
+
+  arr.write = BP.write
+  arr.toString = BP.toString
+  arr.toLocaleString = BP.toString
+  arr.toJSON = BP.toJSON
+  arr.equals = BP.equals
+  arr.compare = BP.compare
+  arr.copy = BP.copy
+  arr.slice = BP.slice
+  arr.readUInt8 = BP.readUInt8
+  arr.readUInt16LE = BP.readUInt16LE
+  arr.readUInt16BE = BP.readUInt16BE
+  arr.readUInt32LE = BP.readUInt32LE
+  arr.readUInt32BE = BP.readUInt32BE
+  arr.readInt8 = BP.readInt8
+  arr.readInt16LE = BP.readInt16LE
+  arr.readInt16BE = BP.readInt16BE
+  arr.readInt32LE = BP.readInt32LE
+  arr.readInt32BE = BP.readInt32BE
+  arr.readFloatLE = BP.readFloatLE
+  arr.readFloatBE = BP.readFloatBE
+  arr.readDoubleLE = BP.readDoubleLE
+  arr.readDoubleBE = BP.readDoubleBE
+  arr.writeUInt8 = BP.writeUInt8
+  arr.writeUInt16LE = BP.writeUInt16LE
+  arr.writeUInt16BE = BP.writeUInt16BE
+  arr.writeUInt32LE = BP.writeUInt32LE
+  arr.writeUInt32BE = BP.writeUInt32BE
+  arr.writeInt8 = BP.writeInt8
+  arr.writeInt16LE = BP.writeInt16LE
+  arr.writeInt16BE = BP.writeInt16BE
+  arr.writeInt32LE = BP.writeInt32LE
+  arr.writeInt32BE = BP.writeInt32BE
+  arr.writeFloatLE = BP.writeFloatLE
+  arr.writeFloatBE = BP.writeFloatBE
+  arr.writeDoubleLE = BP.writeDoubleLE
+  arr.writeDoubleBE = BP.writeDoubleBE
+  arr.fill = BP.fill
+  arr.inspect = BP.inspect
+  arr.toArrayBuffer = BP.toArrayBuffer
+
+  return arr
+}
+
+var INVALID_BASE64_RE = /[^+\/0-9A-z]/g
+
+function base64clean (str) {
+  // Node strips out invalid characters like \n and \t from the string, base64-js does not
+  str = stringtrim(str).replace(INVALID_BASE64_RE, '')
+  // Node allows for non-padded base64 strings (missing trailing ===), base64-js does not
+  while (str.length % 4 !== 0) {
+    str = str + '='
+  }
+  return str
+}
+
+function stringtrim (str) {
+  if (str.trim) return str.trim()
+  return str.replace(/^\s+|\s+$/g, '')
+}
+
+function isArrayish (subject) {
+  return isArray(subject) || Buffer.isBuffer(subject) ||
+      subject && typeof subject === 'object' &&
+      typeof subject.length === 'number'
+}
+
+function toHex (n) {
+  if (n < 16) return '0' + n.toString(16)
+  return n.toString(16)
+}
+
+function utf8ToBytes (str) {
+  var byteArray = []
+  for (var i = 0; i < str.length; i++) {
+    var b = str.charCodeAt(i)
+    if (b <= 0x7F) {
+      byteArray.push(b)
+    } else {
+      var start = i
+      if (b >= 0xD800 && b <= 0xDFFF) i++
+      var h = encodeURIComponent(str.slice(start, i+1)).substr(1).split('%')
+      for (var j = 0; j < h.length; j++) {
+        byteArray.push(parseInt(h[j], 16))
+      }
+    }
+  }
+  return byteArray
+}
+
+function asciiToBytes (str) {
+  var byteArray = []
+  for (var i = 0; i < str.length; i++) {
+    // Node's code seems to be doing this and not & 0x7F..
+    byteArray.push(str.charCodeAt(i) & 0xFF)
+  }
+  return byteArray
+}
+
+function utf16leToBytes (str) {
+  var c, hi, lo
+  var byteArray = []
+  for (var i = 0; i < str.length; i++) {
+    c = str.charCodeAt(i)
+    hi = c >> 8
+    lo = c % 256
+    byteArray.push(lo)
+    byteArray.push(hi)
+  }
+
+  return byteArray
+}
+
+function base64ToBytes (str) {
+  return base64.toByteArray(str)
+}
+
+function blitBuffer (src, dst, offset, length, unitSize) {
+  if (unitSize) length -= length % unitSize;
+  for (var i = 0; i < length; i++) {
+    if ((i + offset >= dst.length) || (i >= src.length))
+      break
+    dst[i + offset] = src[i]
+  }
+  return i
+}
+
+function decodeUtf8Char (str) {
+  try {
+    return decodeURIComponent(str)
+  } catch (err) {
+    return String.fromCharCode(0xFFFD) // UTF 8 invalid char
+  }
+}
+
+},{"base64-js":413,"ieee754":420,"is-array":421}],416:[function(require,module,exports){
 // Generated by CoffeeScript 1.6.2
 /** echo  * @license echo  * while read i do echo  *  done echo
 */
@@ -4802,10 +30275,10 @@ module.exports = Zoomer;
 
 }).call(this);
 
-},{}],28:[function(require,module,exports){
+},{}],417:[function(require,module,exports){
 module.exports = require('./vendor/dat.gui')
 module.exports.color = require('./vendor/dat.color')
-},{"./vendor/dat.color":29,"./vendor/dat.gui":30}],29:[function(require,module,exports){
+},{"./vendor/dat.color":418,"./vendor/dat.gui":419}],418:[function(require,module,exports){
 /**
  * dat-gui JavaScript Controller Library
  * http://code.google.com/p/dat-gui
@@ -5561,7 +31034,7 @@ dat.color.math = (function () {
 })(),
 dat.color.toString,
 dat.utils.common);
-},{}],30:[function(require,module,exports){
+},{}],419:[function(require,module,exports){
 /**
  * dat-gui JavaScript Controller Library
  * http://code.google.com/p/dat-gui
@@ -9222,7 +34695,129 @@ dat.dom.CenteredDiv = (function (dom, common) {
 dat.utils.common),
 dat.dom.dom,
 dat.utils.common);
-},{}],31:[function(require,module,exports){
+},{}],420:[function(require,module,exports){
+/*! ieee754. BSD-3-Clause License. Feross Aboukhadijeh <https://feross.org/opensource> */
+exports.read = function (buffer, offset, isLE, mLen, nBytes) {
+  var e, m
+  var eLen = (nBytes * 8) - mLen - 1
+  var eMax = (1 << eLen) - 1
+  var eBias = eMax >> 1
+  var nBits = -7
+  var i = isLE ? (nBytes - 1) : 0
+  var d = isLE ? -1 : 1
+  var s = buffer[offset + i]
+
+  i += d
+
+  e = s & ((1 << (-nBits)) - 1)
+  s >>= (-nBits)
+  nBits += eLen
+  for (; nBits > 0; e = (e * 256) + buffer[offset + i], i += d, nBits -= 8) {}
+
+  m = e & ((1 << (-nBits)) - 1)
+  e >>= (-nBits)
+  nBits += mLen
+  for (; nBits > 0; m = (m * 256) + buffer[offset + i], i += d, nBits -= 8) {}
+
+  if (e === 0) {
+    e = 1 - eBias
+  } else if (e === eMax) {
+    return m ? NaN : ((s ? -1 : 1) * Infinity)
+  } else {
+    m = m + Math.pow(2, mLen)
+    e = e - eBias
+  }
+  return (s ? -1 : 1) * m * Math.pow(2, e - mLen)
+}
+
+exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
+  var e, m, c
+  var eLen = (nBytes * 8) - mLen - 1
+  var eMax = (1 << eLen) - 1
+  var eBias = eMax >> 1
+  var rt = (mLen === 23 ? Math.pow(2, -24) - Math.pow(2, -77) : 0)
+  var i = isLE ? 0 : (nBytes - 1)
+  var d = isLE ? 1 : -1
+  var s = value < 0 || (value === 0 && 1 / value < 0) ? 1 : 0
+
+  value = Math.abs(value)
+
+  if (isNaN(value) || value === Infinity) {
+    m = isNaN(value) ? 1 : 0
+    e = eMax
+  } else {
+    e = Math.floor(Math.log(value) / Math.LN2)
+    if (value * (c = Math.pow(2, -e)) < 1) {
+      e--
+      c *= 2
+    }
+    if (e + eBias >= 1) {
+      value += rt / c
+    } else {
+      value += rt * Math.pow(2, 1 - eBias)
+    }
+    if (value * c >= 2) {
+      e++
+      c /= 2
+    }
+
+    if (e + eBias >= eMax) {
+      m = 0
+      e = eMax
+    } else if (e + eBias >= 1) {
+      m = ((value * c) - 1) * Math.pow(2, mLen)
+      e = e + eBias
+    } else {
+      m = value * Math.pow(2, eBias - 1) * Math.pow(2, mLen)
+      e = 0
+    }
+  }
+
+  for (; mLen >= 8; buffer[offset + i] = m & 0xff, i += d, m /= 256, mLen -= 8) {}
+
+  e = (e << mLen) | m
+  eLen += mLen
+  for (; eLen > 0; buffer[offset + i] = e & 0xff, i += d, e /= 256, eLen -= 8) {}
+
+  buffer[offset + i - d] |= s * 128
+}
+
+},{}],421:[function(require,module,exports){
+
+/**
+ * isArray
+ */
+
+var isArray = Array.isArray;
+
+/**
+ * toString
+ */
+
+var str = Object.prototype.toString;
+
+/**
+ * Whether or not the given `val`
+ * is an array.
+ *
+ * example:
+ *
+ *        isArray([]);
+ *        // > true
+ *        isArray(arguments);
+ *        // > false
+ *        isArray('');
+ *        // > false
+ *
+ * @param {mixed} val
+ * @return {bool}
+ */
+
+module.exports = isArray || function (val) {
+  return !! val && '[object Array]' == str.call(val);
+};
+
+},{}],422:[function(require,module,exports){
 /*!
  * jQuery Mousewheel 3.1.13
  *
@@ -9445,7 +35040,7 @@ dat.utils.common);
 
 }));
 
-},{}],32:[function(require,module,exports){
+},{}],423:[function(require,module,exports){
 /*!
  * jQuery JavaScript Library v2.1.4
  * http://jquery.com/
@@ -18657,331 +44252,1559 @@ return jQuery;
 
 }));
 
-},{}],33:[function(require,module,exports){
-//     Underscore.js 1.6.0
-//     http://underscorejs.org
-//     (c) 2009-2014 Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
-//     Underscore may be freely distributed under the MIT license.
-
-(function() {
-
-  // Baseline setup
-  // --------------
-
-  // Establish the root object, `window` in the browser, or `exports` on the server.
-  var root = this;
-
-  // Save the previous value of the `_` variable.
-  var previousUnderscore = root._;
-
-  // Establish the object that gets returned to break out of a loop iteration.
-  var breaker = {};
-
-  // Save bytes in the minified (but not gzipped) version:
-  var ArrayProto = Array.prototype, ObjProto = Object.prototype, FuncProto = Function.prototype;
-
-  // Create quick reference variables for speed access to core prototypes.
-  var
-    push             = ArrayProto.push,
-    slice            = ArrayProto.slice,
-    concat           = ArrayProto.concat,
-    toString         = ObjProto.toString,
-    hasOwnProperty   = ObjProto.hasOwnProperty;
-
-  // All **ECMAScript 5** native function implementations that we hope to use
-  // are declared here.
-  var
-    nativeForEach      = ArrayProto.forEach,
-    nativeMap          = ArrayProto.map,
-    nativeReduce       = ArrayProto.reduce,
-    nativeReduceRight  = ArrayProto.reduceRight,
-    nativeFilter       = ArrayProto.filter,
-    nativeEvery        = ArrayProto.every,
-    nativeSome         = ArrayProto.some,
-    nativeIndexOf      = ArrayProto.indexOf,
-    nativeLastIndexOf  = ArrayProto.lastIndexOf,
-    nativeIsArray      = Array.isArray,
-    nativeKeys         = Object.keys,
-    nativeBind         = FuncProto.bind;
-
-  // Create a safe reference to the Underscore object for use below.
-  var _ = function(obj) {
-    if (obj instanceof _) return obj;
-    if (!(this instanceof _)) return new _(obj);
-    this._wrapped = obj;
-  };
-
-  // Export the Underscore object for **Node.js**, with
-  // backwards-compatibility for the old `require()` API. If we're in
-  // the browser, add `_` as a global object via a string identifier,
-  // for Closure Compiler "advanced" mode.
-  if (typeof exports !== 'undefined') {
-    if (typeof module !== 'undefined' && module.exports) {
-      exports = module.exports = _;
-    }
-    exports._ = _;
-  } else {
-    root._ = _;
-  }
+},{}],424:[function(require,module,exports){
+(function (global){
+(function (global, factory) {
+  typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory() :
+  typeof define === 'function' && define.amd ? define('underscore', factory) :
+  (global = typeof globalThis !== 'undefined' ? globalThis : global || self, (function () {
+    var current = global._;
+    var exports = global._ = factory();
+    exports.noConflict = function () { global._ = current; return exports; };
+  }()));
+}(this, (function () {
+  //     Underscore.js 1.13.1
+  //     https://underscorejs.org
+  //     (c) 2009-2021 Jeremy Ashkenas, Julian Gonggrijp, and DocumentCloud and Investigative Reporters & Editors
+  //     Underscore may be freely distributed under the MIT license.
 
   // Current version.
-  _.VERSION = '1.6.0';
+  var VERSION = '1.13.1';
 
-  // Collection Functions
-  // --------------------
+  // Establish the root object, `window` (`self`) in the browser, `global`
+  // on the server, or `this` in some virtual machines. We use `self`
+  // instead of `window` for `WebWorker` support.
+  var root = typeof self == 'object' && self.self === self && self ||
+            typeof global == 'object' && global.global === global && global ||
+            Function('return this')() ||
+            {};
 
-  // The cornerstone, an `each` implementation, aka `forEach`.
-  // Handles objects with the built-in `forEach`, arrays, and raw objects.
-  // Delegates to **ECMAScript 5**'s native `forEach` if available.
-  var each = _.each = _.forEach = function(obj, iterator, context) {
-    if (obj == null) return obj;
-    if (nativeForEach && obj.forEach === nativeForEach) {
-      obj.forEach(iterator, context);
-    } else if (obj.length === +obj.length) {
-      for (var i = 0, length = obj.length; i < length; i++) {
-        if (iterator.call(context, obj[i], i, obj) === breaker) return;
+  // Save bytes in the minified (but not gzipped) version:
+  var ArrayProto = Array.prototype, ObjProto = Object.prototype;
+  var SymbolProto = typeof Symbol !== 'undefined' ? Symbol.prototype : null;
+
+  // Create quick reference variables for speed access to core prototypes.
+  var push = ArrayProto.push,
+      slice = ArrayProto.slice,
+      toString = ObjProto.toString,
+      hasOwnProperty = ObjProto.hasOwnProperty;
+
+  // Modern feature detection.
+  var supportsArrayBuffer = typeof ArrayBuffer !== 'undefined',
+      supportsDataView = typeof DataView !== 'undefined';
+
+  // All **ECMAScript 5+** native function implementations that we hope to use
+  // are declared here.
+  var nativeIsArray = Array.isArray,
+      nativeKeys = Object.keys,
+      nativeCreate = Object.create,
+      nativeIsView = supportsArrayBuffer && ArrayBuffer.isView;
+
+  // Create references to these builtin functions because we override them.
+  var _isNaN = isNaN,
+      _isFinite = isFinite;
+
+  // Keys in IE < 9 that won't be iterated by `for key in ...` and thus missed.
+  var hasEnumBug = !{toString: null}.propertyIsEnumerable('toString');
+  var nonEnumerableProps = ['valueOf', 'isPrototypeOf', 'toString',
+    'propertyIsEnumerable', 'hasOwnProperty', 'toLocaleString'];
+
+  // The largest integer that can be represented exactly.
+  var MAX_ARRAY_INDEX = Math.pow(2, 53) - 1;
+
+  // Some functions take a variable number of arguments, or a few expected
+  // arguments at the beginning and then a variable number of values to operate
+  // on. This helper accumulates all remaining arguments past the function’s
+  // argument length (or an explicit `startIndex`), into an array that becomes
+  // the last argument. Similar to ES6’s "rest parameter".
+  function restArguments(func, startIndex) {
+    startIndex = startIndex == null ? func.length - 1 : +startIndex;
+    return function() {
+      var length = Math.max(arguments.length - startIndex, 0),
+          rest = Array(length),
+          index = 0;
+      for (; index < length; index++) {
+        rest[index] = arguments[index + startIndex];
+      }
+      switch (startIndex) {
+        case 0: return func.call(this, rest);
+        case 1: return func.call(this, arguments[0], rest);
+        case 2: return func.call(this, arguments[0], arguments[1], rest);
+      }
+      var args = Array(startIndex + 1);
+      for (index = 0; index < startIndex; index++) {
+        args[index] = arguments[index];
+      }
+      args[startIndex] = rest;
+      return func.apply(this, args);
+    };
+  }
+
+  // Is a given variable an object?
+  function isObject(obj) {
+    var type = typeof obj;
+    return type === 'function' || type === 'object' && !!obj;
+  }
+
+  // Is a given value equal to null?
+  function isNull(obj) {
+    return obj === null;
+  }
+
+  // Is a given variable undefined?
+  function isUndefined(obj) {
+    return obj === void 0;
+  }
+
+  // Is a given value a boolean?
+  function isBoolean(obj) {
+    return obj === true || obj === false || toString.call(obj) === '[object Boolean]';
+  }
+
+  // Is a given value a DOM element?
+  function isElement(obj) {
+    return !!(obj && obj.nodeType === 1);
+  }
+
+  // Internal function for creating a `toString`-based type tester.
+  function tagTester(name) {
+    var tag = '[object ' + name + ']';
+    return function(obj) {
+      return toString.call(obj) === tag;
+    };
+  }
+
+  var isString = tagTester('String');
+
+  var isNumber = tagTester('Number');
+
+  var isDate = tagTester('Date');
+
+  var isRegExp = tagTester('RegExp');
+
+  var isError = tagTester('Error');
+
+  var isSymbol = tagTester('Symbol');
+
+  var isArrayBuffer = tagTester('ArrayBuffer');
+
+  var isFunction = tagTester('Function');
+
+  // Optimize `isFunction` if appropriate. Work around some `typeof` bugs in old
+  // v8, IE 11 (#1621), Safari 8 (#1929), and PhantomJS (#2236).
+  var nodelist = root.document && root.document.childNodes;
+  if (typeof /./ != 'function' && typeof Int8Array != 'object' && typeof nodelist != 'function') {
+    isFunction = function(obj) {
+      return typeof obj == 'function' || false;
+    };
+  }
+
+  var isFunction$1 = isFunction;
+
+  var hasObjectTag = tagTester('Object');
+
+  // In IE 10 - Edge 13, `DataView` has string tag `'[object Object]'`.
+  // In IE 11, the most common among them, this problem also applies to
+  // `Map`, `WeakMap` and `Set`.
+  var hasStringTagBug = (
+        supportsDataView && hasObjectTag(new DataView(new ArrayBuffer(8)))
+      ),
+      isIE11 = (typeof Map !== 'undefined' && hasObjectTag(new Map));
+
+  var isDataView = tagTester('DataView');
+
+  // In IE 10 - Edge 13, we need a different heuristic
+  // to determine whether an object is a `DataView`.
+  function ie10IsDataView(obj) {
+    return obj != null && isFunction$1(obj.getInt8) && isArrayBuffer(obj.buffer);
+  }
+
+  var isDataView$1 = (hasStringTagBug ? ie10IsDataView : isDataView);
+
+  // Is a given value an array?
+  // Delegates to ECMA5's native `Array.isArray`.
+  var isArray = nativeIsArray || tagTester('Array');
+
+  // Internal function to check whether `key` is an own property name of `obj`.
+  function has$1(obj, key) {
+    return obj != null && hasOwnProperty.call(obj, key);
+  }
+
+  var isArguments = tagTester('Arguments');
+
+  // Define a fallback version of the method in browsers (ahem, IE < 9), where
+  // there isn't any inspectable "Arguments" type.
+  (function() {
+    if (!isArguments(arguments)) {
+      isArguments = function(obj) {
+        return has$1(obj, 'callee');
+      };
+    }
+  }());
+
+  var isArguments$1 = isArguments;
+
+  // Is a given object a finite number?
+  function isFinite$1(obj) {
+    return !isSymbol(obj) && _isFinite(obj) && !isNaN(parseFloat(obj));
+  }
+
+  // Is the given value `NaN`?
+  function isNaN$1(obj) {
+    return isNumber(obj) && _isNaN(obj);
+  }
+
+  // Predicate-generating function. Often useful outside of Underscore.
+  function constant(value) {
+    return function() {
+      return value;
+    };
+  }
+
+  // Common internal logic for `isArrayLike` and `isBufferLike`.
+  function createSizePropertyCheck(getSizeProperty) {
+    return function(collection) {
+      var sizeProperty = getSizeProperty(collection);
+      return typeof sizeProperty == 'number' && sizeProperty >= 0 && sizeProperty <= MAX_ARRAY_INDEX;
+    }
+  }
+
+  // Internal helper to generate a function to obtain property `key` from `obj`.
+  function shallowProperty(key) {
+    return function(obj) {
+      return obj == null ? void 0 : obj[key];
+    };
+  }
+
+  // Internal helper to obtain the `byteLength` property of an object.
+  var getByteLength = shallowProperty('byteLength');
+
+  // Internal helper to determine whether we should spend extensive checks against
+  // `ArrayBuffer` et al.
+  var isBufferLike = createSizePropertyCheck(getByteLength);
+
+  // Is a given value a typed array?
+  var typedArrayPattern = /\[object ((I|Ui)nt(8|16|32)|Float(32|64)|Uint8Clamped|Big(I|Ui)nt64)Array\]/;
+  function isTypedArray(obj) {
+    // `ArrayBuffer.isView` is the most future-proof, so use it when available.
+    // Otherwise, fall back on the above regular expression.
+    return nativeIsView ? (nativeIsView(obj) && !isDataView$1(obj)) :
+                  isBufferLike(obj) && typedArrayPattern.test(toString.call(obj));
+  }
+
+  var isTypedArray$1 = supportsArrayBuffer ? isTypedArray : constant(false);
+
+  // Internal helper to obtain the `length` property of an object.
+  var getLength = shallowProperty('length');
+
+  // Internal helper to create a simple lookup structure.
+  // `collectNonEnumProps` used to depend on `_.contains`, but this led to
+  // circular imports. `emulatedSet` is a one-off solution that only works for
+  // arrays of strings.
+  function emulatedSet(keys) {
+    var hash = {};
+    for (var l = keys.length, i = 0; i < l; ++i) hash[keys[i]] = true;
+    return {
+      contains: function(key) { return hash[key]; },
+      push: function(key) {
+        hash[key] = true;
+        return keys.push(key);
+      }
+    };
+  }
+
+  // Internal helper. Checks `keys` for the presence of keys in IE < 9 that won't
+  // be iterated by `for key in ...` and thus missed. Extends `keys` in place if
+  // needed.
+  function collectNonEnumProps(obj, keys) {
+    keys = emulatedSet(keys);
+    var nonEnumIdx = nonEnumerableProps.length;
+    var constructor = obj.constructor;
+    var proto = isFunction$1(constructor) && constructor.prototype || ObjProto;
+
+    // Constructor is a special case.
+    var prop = 'constructor';
+    if (has$1(obj, prop) && !keys.contains(prop)) keys.push(prop);
+
+    while (nonEnumIdx--) {
+      prop = nonEnumerableProps[nonEnumIdx];
+      if (prop in obj && obj[prop] !== proto[prop] && !keys.contains(prop)) {
+        keys.push(prop);
+      }
+    }
+  }
+
+  // Retrieve the names of an object's own properties.
+  // Delegates to **ECMAScript 5**'s native `Object.keys`.
+  function keys(obj) {
+    if (!isObject(obj)) return [];
+    if (nativeKeys) return nativeKeys(obj);
+    var keys = [];
+    for (var key in obj) if (has$1(obj, key)) keys.push(key);
+    // Ahem, IE < 9.
+    if (hasEnumBug) collectNonEnumProps(obj, keys);
+    return keys;
+  }
+
+  // Is a given array, string, or object empty?
+  // An "empty" object has no enumerable own-properties.
+  function isEmpty(obj) {
+    if (obj == null) return true;
+    // Skip the more expensive `toString`-based type checks if `obj` has no
+    // `.length`.
+    var length = getLength(obj);
+    if (typeof length == 'number' && (
+      isArray(obj) || isString(obj) || isArguments$1(obj)
+    )) return length === 0;
+    return getLength(keys(obj)) === 0;
+  }
+
+  // Returns whether an object has a given set of `key:value` pairs.
+  function isMatch(object, attrs) {
+    var _keys = keys(attrs), length = _keys.length;
+    if (object == null) return !length;
+    var obj = Object(object);
+    for (var i = 0; i < length; i++) {
+      var key = _keys[i];
+      if (attrs[key] !== obj[key] || !(key in obj)) return false;
+    }
+    return true;
+  }
+
+  // If Underscore is called as a function, it returns a wrapped object that can
+  // be used OO-style. This wrapper holds altered versions of all functions added
+  // through `_.mixin`. Wrapped objects may be chained.
+  function _$1(obj) {
+    if (obj instanceof _$1) return obj;
+    if (!(this instanceof _$1)) return new _$1(obj);
+    this._wrapped = obj;
+  }
+
+  _$1.VERSION = VERSION;
+
+  // Extracts the result from a wrapped and chained object.
+  _$1.prototype.value = function() {
+    return this._wrapped;
+  };
+
+  // Provide unwrapping proxies for some methods used in engine operations
+  // such as arithmetic and JSON stringification.
+  _$1.prototype.valueOf = _$1.prototype.toJSON = _$1.prototype.value;
+
+  _$1.prototype.toString = function() {
+    return String(this._wrapped);
+  };
+
+  // Internal function to wrap or shallow-copy an ArrayBuffer,
+  // typed array or DataView to a new view, reusing the buffer.
+  function toBufferView(bufferSource) {
+    return new Uint8Array(
+      bufferSource.buffer || bufferSource,
+      bufferSource.byteOffset || 0,
+      getByteLength(bufferSource)
+    );
+  }
+
+  // We use this string twice, so give it a name for minification.
+  var tagDataView = '[object DataView]';
+
+  // Internal recursive comparison function for `_.isEqual`.
+  function eq(a, b, aStack, bStack) {
+    // Identical objects are equal. `0 === -0`, but they aren't identical.
+    // See the [Harmony `egal` proposal](https://wiki.ecmascript.org/doku.php?id=harmony:egal).
+    if (a === b) return a !== 0 || 1 / a === 1 / b;
+    // `null` or `undefined` only equal to itself (strict comparison).
+    if (a == null || b == null) return false;
+    // `NaN`s are equivalent, but non-reflexive.
+    if (a !== a) return b !== b;
+    // Exhaust primitive checks
+    var type = typeof a;
+    if (type !== 'function' && type !== 'object' && typeof b != 'object') return false;
+    return deepEq(a, b, aStack, bStack);
+  }
+
+  // Internal recursive comparison function for `_.isEqual`.
+  function deepEq(a, b, aStack, bStack) {
+    // Unwrap any wrapped objects.
+    if (a instanceof _$1) a = a._wrapped;
+    if (b instanceof _$1) b = b._wrapped;
+    // Compare `[[Class]]` names.
+    var className = toString.call(a);
+    if (className !== toString.call(b)) return false;
+    // Work around a bug in IE 10 - Edge 13.
+    if (hasStringTagBug && className == '[object Object]' && isDataView$1(a)) {
+      if (!isDataView$1(b)) return false;
+      className = tagDataView;
+    }
+    switch (className) {
+      // These types are compared by value.
+      case '[object RegExp]':
+        // RegExps are coerced to strings for comparison (Note: '' + /a/i === '/a/i')
+      case '[object String]':
+        // Primitives and their corresponding object wrappers are equivalent; thus, `"5"` is
+        // equivalent to `new String("5")`.
+        return '' + a === '' + b;
+      case '[object Number]':
+        // `NaN`s are equivalent, but non-reflexive.
+        // Object(NaN) is equivalent to NaN.
+        if (+a !== +a) return +b !== +b;
+        // An `egal` comparison is performed for other numeric values.
+        return +a === 0 ? 1 / +a === 1 / b : +a === +b;
+      case '[object Date]':
+      case '[object Boolean]':
+        // Coerce dates and booleans to numeric primitive values. Dates are compared by their
+        // millisecond representations. Note that invalid dates with millisecond representations
+        // of `NaN` are not equivalent.
+        return +a === +b;
+      case '[object Symbol]':
+        return SymbolProto.valueOf.call(a) === SymbolProto.valueOf.call(b);
+      case '[object ArrayBuffer]':
+      case tagDataView:
+        // Coerce to typed array so we can fall through.
+        return deepEq(toBufferView(a), toBufferView(b), aStack, bStack);
+    }
+
+    var areArrays = className === '[object Array]';
+    if (!areArrays && isTypedArray$1(a)) {
+        var byteLength = getByteLength(a);
+        if (byteLength !== getByteLength(b)) return false;
+        if (a.buffer === b.buffer && a.byteOffset === b.byteOffset) return true;
+        areArrays = true;
+    }
+    if (!areArrays) {
+      if (typeof a != 'object' || typeof b != 'object') return false;
+
+      // Objects with different constructors are not equivalent, but `Object`s or `Array`s
+      // from different frames are.
+      var aCtor = a.constructor, bCtor = b.constructor;
+      if (aCtor !== bCtor && !(isFunction$1(aCtor) && aCtor instanceof aCtor &&
+                               isFunction$1(bCtor) && bCtor instanceof bCtor)
+                          && ('constructor' in a && 'constructor' in b)) {
+        return false;
+      }
+    }
+    // Assume equality for cyclic structures. The algorithm for detecting cyclic
+    // structures is adapted from ES 5.1 section 15.12.3, abstract operation `JO`.
+
+    // Initializing stack of traversed objects.
+    // It's done here since we only need them for objects and arrays comparison.
+    aStack = aStack || [];
+    bStack = bStack || [];
+    var length = aStack.length;
+    while (length--) {
+      // Linear search. Performance is inversely proportional to the number of
+      // unique nested structures.
+      if (aStack[length] === a) return bStack[length] === b;
+    }
+
+    // Add the first object to the stack of traversed objects.
+    aStack.push(a);
+    bStack.push(b);
+
+    // Recursively compare objects and arrays.
+    if (areArrays) {
+      // Compare array lengths to determine if a deep comparison is necessary.
+      length = a.length;
+      if (length !== b.length) return false;
+      // Deep compare the contents, ignoring non-numeric properties.
+      while (length--) {
+        if (!eq(a[length], b[length], aStack, bStack)) return false;
       }
     } else {
-      var keys = _.keys(obj);
-      for (var i = 0, length = keys.length; i < length; i++) {
-        if (iterator.call(context, obj[keys[i]], keys[i], obj) === breaker) return;
+      // Deep compare objects.
+      var _keys = keys(a), key;
+      length = _keys.length;
+      // Ensure that both objects contain the same number of properties before comparing deep equality.
+      if (keys(b).length !== length) return false;
+      while (length--) {
+        // Deep compare each member
+        key = _keys[length];
+        if (!(has$1(b, key) && eq(a[key], b[key], aStack, bStack))) return false;
+      }
+    }
+    // Remove the first object from the stack of traversed objects.
+    aStack.pop();
+    bStack.pop();
+    return true;
+  }
+
+  // Perform a deep comparison to check if two objects are equal.
+  function isEqual(a, b) {
+    return eq(a, b);
+  }
+
+  // Retrieve all the enumerable property names of an object.
+  function allKeys(obj) {
+    if (!isObject(obj)) return [];
+    var keys = [];
+    for (var key in obj) keys.push(key);
+    // Ahem, IE < 9.
+    if (hasEnumBug) collectNonEnumProps(obj, keys);
+    return keys;
+  }
+
+  // Since the regular `Object.prototype.toString` type tests don't work for
+  // some types in IE 11, we use a fingerprinting heuristic instead, based
+  // on the methods. It's not great, but it's the best we got.
+  // The fingerprint method lists are defined below.
+  function ie11fingerprint(methods) {
+    var length = getLength(methods);
+    return function(obj) {
+      if (obj == null) return false;
+      // `Map`, `WeakMap` and `Set` have no enumerable keys.
+      var keys = allKeys(obj);
+      if (getLength(keys)) return false;
+      for (var i = 0; i < length; i++) {
+        if (!isFunction$1(obj[methods[i]])) return false;
+      }
+      // If we are testing against `WeakMap`, we need to ensure that
+      // `obj` doesn't have a `forEach` method in order to distinguish
+      // it from a regular `Map`.
+      return methods !== weakMapMethods || !isFunction$1(obj[forEachName]);
+    };
+  }
+
+  // In the interest of compact minification, we write
+  // each string in the fingerprints only once.
+  var forEachName = 'forEach',
+      hasName = 'has',
+      commonInit = ['clear', 'delete'],
+      mapTail = ['get', hasName, 'set'];
+
+  // `Map`, `WeakMap` and `Set` each have slightly different
+  // combinations of the above sublists.
+  var mapMethods = commonInit.concat(forEachName, mapTail),
+      weakMapMethods = commonInit.concat(mapTail),
+      setMethods = ['add'].concat(commonInit, forEachName, hasName);
+
+  var isMap = isIE11 ? ie11fingerprint(mapMethods) : tagTester('Map');
+
+  var isWeakMap = isIE11 ? ie11fingerprint(weakMapMethods) : tagTester('WeakMap');
+
+  var isSet = isIE11 ? ie11fingerprint(setMethods) : tagTester('Set');
+
+  var isWeakSet = tagTester('WeakSet');
+
+  // Retrieve the values of an object's properties.
+  function values(obj) {
+    var _keys = keys(obj);
+    var length = _keys.length;
+    var values = Array(length);
+    for (var i = 0; i < length; i++) {
+      values[i] = obj[_keys[i]];
+    }
+    return values;
+  }
+
+  // Convert an object into a list of `[key, value]` pairs.
+  // The opposite of `_.object` with one argument.
+  function pairs(obj) {
+    var _keys = keys(obj);
+    var length = _keys.length;
+    var pairs = Array(length);
+    for (var i = 0; i < length; i++) {
+      pairs[i] = [_keys[i], obj[_keys[i]]];
+    }
+    return pairs;
+  }
+
+  // Invert the keys and values of an object. The values must be serializable.
+  function invert(obj) {
+    var result = {};
+    var _keys = keys(obj);
+    for (var i = 0, length = _keys.length; i < length; i++) {
+      result[obj[_keys[i]]] = _keys[i];
+    }
+    return result;
+  }
+
+  // Return a sorted list of the function names available on the object.
+  function functions(obj) {
+    var names = [];
+    for (var key in obj) {
+      if (isFunction$1(obj[key])) names.push(key);
+    }
+    return names.sort();
+  }
+
+  // An internal function for creating assigner functions.
+  function createAssigner(keysFunc, defaults) {
+    return function(obj) {
+      var length = arguments.length;
+      if (defaults) obj = Object(obj);
+      if (length < 2 || obj == null) return obj;
+      for (var index = 1; index < length; index++) {
+        var source = arguments[index],
+            keys = keysFunc(source),
+            l = keys.length;
+        for (var i = 0; i < l; i++) {
+          var key = keys[i];
+          if (!defaults || obj[key] === void 0) obj[key] = source[key];
+        }
+      }
+      return obj;
+    };
+  }
+
+  // Extend a given object with all the properties in passed-in object(s).
+  var extend = createAssigner(allKeys);
+
+  // Assigns a given object with all the own properties in the passed-in
+  // object(s).
+  // (https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Object/assign)
+  var extendOwn = createAssigner(keys);
+
+  // Fill in a given object with default properties.
+  var defaults = createAssigner(allKeys, true);
+
+  // Create a naked function reference for surrogate-prototype-swapping.
+  function ctor() {
+    return function(){};
+  }
+
+  // An internal function for creating a new object that inherits from another.
+  function baseCreate(prototype) {
+    if (!isObject(prototype)) return {};
+    if (nativeCreate) return nativeCreate(prototype);
+    var Ctor = ctor();
+    Ctor.prototype = prototype;
+    var result = new Ctor;
+    Ctor.prototype = null;
+    return result;
+  }
+
+  // Creates an object that inherits from the given prototype object.
+  // If additional properties are provided then they will be added to the
+  // created object.
+  function create(prototype, props) {
+    var result = baseCreate(prototype);
+    if (props) extendOwn(result, props);
+    return result;
+  }
+
+  // Create a (shallow-cloned) duplicate of an object.
+  function clone(obj) {
+    if (!isObject(obj)) return obj;
+    return isArray(obj) ? obj.slice() : extend({}, obj);
+  }
+
+  // Invokes `interceptor` with the `obj` and then returns `obj`.
+  // The primary purpose of this method is to "tap into" a method chain, in
+  // order to perform operations on intermediate results within the chain.
+  function tap(obj, interceptor) {
+    interceptor(obj);
+    return obj;
+  }
+
+  // Normalize a (deep) property `path` to array.
+  // Like `_.iteratee`, this function can be customized.
+  function toPath$1(path) {
+    return isArray(path) ? path : [path];
+  }
+  _$1.toPath = toPath$1;
+
+  // Internal wrapper for `_.toPath` to enable minification.
+  // Similar to `cb` for `_.iteratee`.
+  function toPath(path) {
+    return _$1.toPath(path);
+  }
+
+  // Internal function to obtain a nested property in `obj` along `path`.
+  function deepGet(obj, path) {
+    var length = path.length;
+    for (var i = 0; i < length; i++) {
+      if (obj == null) return void 0;
+      obj = obj[path[i]];
+    }
+    return length ? obj : void 0;
+  }
+
+  // Get the value of the (deep) property on `path` from `object`.
+  // If any property in `path` does not exist or if the value is
+  // `undefined`, return `defaultValue` instead.
+  // The `path` is normalized through `_.toPath`.
+  function get(object, path, defaultValue) {
+    var value = deepGet(object, toPath(path));
+    return isUndefined(value) ? defaultValue : value;
+  }
+
+  // Shortcut function for checking if an object has a given property directly on
+  // itself (in other words, not on a prototype). Unlike the internal `has`
+  // function, this public version can also traverse nested properties.
+  function has(obj, path) {
+    path = toPath(path);
+    var length = path.length;
+    for (var i = 0; i < length; i++) {
+      var key = path[i];
+      if (!has$1(obj, key)) return false;
+      obj = obj[key];
+    }
+    return !!length;
+  }
+
+  // Keep the identity function around for default iteratees.
+  function identity(value) {
+    return value;
+  }
+
+  // Returns a predicate for checking whether an object has a given set of
+  // `key:value` pairs.
+  function matcher(attrs) {
+    attrs = extendOwn({}, attrs);
+    return function(obj) {
+      return isMatch(obj, attrs);
+    };
+  }
+
+  // Creates a function that, when passed an object, will traverse that object’s
+  // properties down the given `path`, specified as an array of keys or indices.
+  function property(path) {
+    path = toPath(path);
+    return function(obj) {
+      return deepGet(obj, path);
+    };
+  }
+
+  // Internal function that returns an efficient (for current engines) version
+  // of the passed-in callback, to be repeatedly applied in other Underscore
+  // functions.
+  function optimizeCb(func, context, argCount) {
+    if (context === void 0) return func;
+    switch (argCount == null ? 3 : argCount) {
+      case 1: return function(value) {
+        return func.call(context, value);
+      };
+      // The 2-argument case is omitted because we’re not using it.
+      case 3: return function(value, index, collection) {
+        return func.call(context, value, index, collection);
+      };
+      case 4: return function(accumulator, value, index, collection) {
+        return func.call(context, accumulator, value, index, collection);
+      };
+    }
+    return function() {
+      return func.apply(context, arguments);
+    };
+  }
+
+  // An internal function to generate callbacks that can be applied to each
+  // element in a collection, returning the desired result — either `_.identity`,
+  // an arbitrary callback, a property matcher, or a property accessor.
+  function baseIteratee(value, context, argCount) {
+    if (value == null) return identity;
+    if (isFunction$1(value)) return optimizeCb(value, context, argCount);
+    if (isObject(value) && !isArray(value)) return matcher(value);
+    return property(value);
+  }
+
+  // External wrapper for our callback generator. Users may customize
+  // `_.iteratee` if they want additional predicate/iteratee shorthand styles.
+  // This abstraction hides the internal-only `argCount` argument.
+  function iteratee(value, context) {
+    return baseIteratee(value, context, Infinity);
+  }
+  _$1.iteratee = iteratee;
+
+  // The function we call internally to generate a callback. It invokes
+  // `_.iteratee` if overridden, otherwise `baseIteratee`.
+  function cb(value, context, argCount) {
+    if (_$1.iteratee !== iteratee) return _$1.iteratee(value, context);
+    return baseIteratee(value, context, argCount);
+  }
+
+  // Returns the results of applying the `iteratee` to each element of `obj`.
+  // In contrast to `_.map` it returns an object.
+  function mapObject(obj, iteratee, context) {
+    iteratee = cb(iteratee, context);
+    var _keys = keys(obj),
+        length = _keys.length,
+        results = {};
+    for (var index = 0; index < length; index++) {
+      var currentKey = _keys[index];
+      results[currentKey] = iteratee(obj[currentKey], currentKey, obj);
+    }
+    return results;
+  }
+
+  // Predicate-generating function. Often useful outside of Underscore.
+  function noop(){}
+
+  // Generates a function for a given object that returns a given property.
+  function propertyOf(obj) {
+    if (obj == null) return noop;
+    return function(path) {
+      return get(obj, path);
+    };
+  }
+
+  // Run a function **n** times.
+  function times(n, iteratee, context) {
+    var accum = Array(Math.max(0, n));
+    iteratee = optimizeCb(iteratee, context, 1);
+    for (var i = 0; i < n; i++) accum[i] = iteratee(i);
+    return accum;
+  }
+
+  // Return a random integer between `min` and `max` (inclusive).
+  function random(min, max) {
+    if (max == null) {
+      max = min;
+      min = 0;
+    }
+    return min + Math.floor(Math.random() * (max - min + 1));
+  }
+
+  // A (possibly faster) way to get the current timestamp as an integer.
+  var now = Date.now || function() {
+    return new Date().getTime();
+  };
+
+  // Internal helper to generate functions for escaping and unescaping strings
+  // to/from HTML interpolation.
+  function createEscaper(map) {
+    var escaper = function(match) {
+      return map[match];
+    };
+    // Regexes for identifying a key that needs to be escaped.
+    var source = '(?:' + keys(map).join('|') + ')';
+    var testRegexp = RegExp(source);
+    var replaceRegexp = RegExp(source, 'g');
+    return function(string) {
+      string = string == null ? '' : '' + string;
+      return testRegexp.test(string) ? string.replace(replaceRegexp, escaper) : string;
+    };
+  }
+
+  // Internal list of HTML entities for escaping.
+  var escapeMap = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#x27;',
+    '`': '&#x60;'
+  };
+
+  // Function for escaping strings to HTML interpolation.
+  var _escape = createEscaper(escapeMap);
+
+  // Internal list of HTML entities for unescaping.
+  var unescapeMap = invert(escapeMap);
+
+  // Function for unescaping strings from HTML interpolation.
+  var _unescape = createEscaper(unescapeMap);
+
+  // By default, Underscore uses ERB-style template delimiters. Change the
+  // following template settings to use alternative delimiters.
+  var templateSettings = _$1.templateSettings = {
+    evaluate: /<%([\s\S]+?)%>/g,
+    interpolate: /<%=([\s\S]+?)%>/g,
+    escape: /<%-([\s\S]+?)%>/g
+  };
+
+  // When customizing `_.templateSettings`, if you don't want to define an
+  // interpolation, evaluation or escaping regex, we need one that is
+  // guaranteed not to match.
+  var noMatch = /(.)^/;
+
+  // Certain characters need to be escaped so that they can be put into a
+  // string literal.
+  var escapes = {
+    "'": "'",
+    '\\': '\\',
+    '\r': 'r',
+    '\n': 'n',
+    '\u2028': 'u2028',
+    '\u2029': 'u2029'
+  };
+
+  var escapeRegExp = /\\|'|\r|\n|\u2028|\u2029/g;
+
+  function escapeChar(match) {
+    return '\\' + escapes[match];
+  }
+
+  // In order to prevent third-party code injection through
+  // `_.templateSettings.variable`, we test it against the following regular
+  // expression. It is intentionally a bit more liberal than just matching valid
+  // identifiers, but still prevents possible loopholes through defaults or
+  // destructuring assignment.
+  var bareIdentifier = /^\s*(\w|\$)+\s*$/;
+
+  // JavaScript micro-templating, similar to John Resig's implementation.
+  // Underscore templating handles arbitrary delimiters, preserves whitespace,
+  // and correctly escapes quotes within interpolated code.
+  // NB: `oldSettings` only exists for backwards compatibility.
+  function template(text, settings, oldSettings) {
+    if (!settings && oldSettings) settings = oldSettings;
+    settings = defaults({}, settings, _$1.templateSettings);
+
+    // Combine delimiters into one regular expression via alternation.
+    var matcher = RegExp([
+      (settings.escape || noMatch).source,
+      (settings.interpolate || noMatch).source,
+      (settings.evaluate || noMatch).source
+    ].join('|') + '|$', 'g');
+
+    // Compile the template source, escaping string literals appropriately.
+    var index = 0;
+    var source = "__p+='";
+    text.replace(matcher, function(match, escape, interpolate, evaluate, offset) {
+      source += text.slice(index, offset).replace(escapeRegExp, escapeChar);
+      index = offset + match.length;
+
+      if (escape) {
+        source += "'+\n((__t=(" + escape + "))==null?'':_.escape(__t))+\n'";
+      } else if (interpolate) {
+        source += "'+\n((__t=(" + interpolate + "))==null?'':__t)+\n'";
+      } else if (evaluate) {
+        source += "';\n" + evaluate + "\n__p+='";
+      }
+
+      // Adobe VMs need the match returned to produce the correct offset.
+      return match;
+    });
+    source += "';\n";
+
+    var argument = settings.variable;
+    if (argument) {
+      // Insure against third-party code injection. (CVE-2021-23358)
+      if (!bareIdentifier.test(argument)) throw new Error(
+        'variable is not a bare identifier: ' + argument
+      );
+    } else {
+      // If a variable is not specified, place data values in local scope.
+      source = 'with(obj||{}){\n' + source + '}\n';
+      argument = 'obj';
+    }
+
+    source = "var __t,__p='',__j=Array.prototype.join," +
+      "print=function(){__p+=__j.call(arguments,'');};\n" +
+      source + 'return __p;\n';
+
+    var render;
+    try {
+      render = new Function(argument, '_', source);
+    } catch (e) {
+      e.source = source;
+      throw e;
+    }
+
+    var template = function(data) {
+      return render.call(this, data, _$1);
+    };
+
+    // Provide the compiled source as a convenience for precompilation.
+    template.source = 'function(' + argument + '){\n' + source + '}';
+
+    return template;
+  }
+
+  // Traverses the children of `obj` along `path`. If a child is a function, it
+  // is invoked with its parent as context. Returns the value of the final
+  // child, or `fallback` if any child is undefined.
+  function result(obj, path, fallback) {
+    path = toPath(path);
+    var length = path.length;
+    if (!length) {
+      return isFunction$1(fallback) ? fallback.call(obj) : fallback;
+    }
+    for (var i = 0; i < length; i++) {
+      var prop = obj == null ? void 0 : obj[path[i]];
+      if (prop === void 0) {
+        prop = fallback;
+        i = length; // Ensure we don't continue iterating.
+      }
+      obj = isFunction$1(prop) ? prop.call(obj) : prop;
+    }
+    return obj;
+  }
+
+  // Generate a unique integer id (unique within the entire client session).
+  // Useful for temporary DOM ids.
+  var idCounter = 0;
+  function uniqueId(prefix) {
+    var id = ++idCounter + '';
+    return prefix ? prefix + id : id;
+  }
+
+  // Start chaining a wrapped Underscore object.
+  function chain(obj) {
+    var instance = _$1(obj);
+    instance._chain = true;
+    return instance;
+  }
+
+  // Internal function to execute `sourceFunc` bound to `context` with optional
+  // `args`. Determines whether to execute a function as a constructor or as a
+  // normal function.
+  function executeBound(sourceFunc, boundFunc, context, callingContext, args) {
+    if (!(callingContext instanceof boundFunc)) return sourceFunc.apply(context, args);
+    var self = baseCreate(sourceFunc.prototype);
+    var result = sourceFunc.apply(self, args);
+    if (isObject(result)) return result;
+    return self;
+  }
+
+  // Partially apply a function by creating a version that has had some of its
+  // arguments pre-filled, without changing its dynamic `this` context. `_` acts
+  // as a placeholder by default, allowing any combination of arguments to be
+  // pre-filled. Set `_.partial.placeholder` for a custom placeholder argument.
+  var partial = restArguments(function(func, boundArgs) {
+    var placeholder = partial.placeholder;
+    var bound = function() {
+      var position = 0, length = boundArgs.length;
+      var args = Array(length);
+      for (var i = 0; i < length; i++) {
+        args[i] = boundArgs[i] === placeholder ? arguments[position++] : boundArgs[i];
+      }
+      while (position < arguments.length) args.push(arguments[position++]);
+      return executeBound(func, bound, this, this, args);
+    };
+    return bound;
+  });
+
+  partial.placeholder = _$1;
+
+  // Create a function bound to a given object (assigning `this`, and arguments,
+  // optionally).
+  var bind = restArguments(function(func, context, args) {
+    if (!isFunction$1(func)) throw new TypeError('Bind must be called on a function');
+    var bound = restArguments(function(callArgs) {
+      return executeBound(func, bound, context, this, args.concat(callArgs));
+    });
+    return bound;
+  });
+
+  // Internal helper for collection methods to determine whether a collection
+  // should be iterated as an array or as an object.
+  // Related: https://people.mozilla.org/~jorendorff/es6-draft.html#sec-tolength
+  // Avoids a very nasty iOS 8 JIT bug on ARM-64. #2094
+  var isArrayLike = createSizePropertyCheck(getLength);
+
+  // Internal implementation of a recursive `flatten` function.
+  function flatten$1(input, depth, strict, output) {
+    output = output || [];
+    if (!depth && depth !== 0) {
+      depth = Infinity;
+    } else if (depth <= 0) {
+      return output.concat(input);
+    }
+    var idx = output.length;
+    for (var i = 0, length = getLength(input); i < length; i++) {
+      var value = input[i];
+      if (isArrayLike(value) && (isArray(value) || isArguments$1(value))) {
+        // Flatten current level of array or arguments object.
+        if (depth > 1) {
+          flatten$1(value, depth - 1, strict, output);
+          idx = output.length;
+        } else {
+          var j = 0, len = value.length;
+          while (j < len) output[idx++] = value[j++];
+        }
+      } else if (!strict) {
+        output[idx++] = value;
+      }
+    }
+    return output;
+  }
+
+  // Bind a number of an object's methods to that object. Remaining arguments
+  // are the method names to be bound. Useful for ensuring that all callbacks
+  // defined on an object belong to it.
+  var bindAll = restArguments(function(obj, keys) {
+    keys = flatten$1(keys, false, false);
+    var index = keys.length;
+    if (index < 1) throw new Error('bindAll must be passed function names');
+    while (index--) {
+      var key = keys[index];
+      obj[key] = bind(obj[key], obj);
+    }
+    return obj;
+  });
+
+  // Memoize an expensive function by storing its results.
+  function memoize(func, hasher) {
+    var memoize = function(key) {
+      var cache = memoize.cache;
+      var address = '' + (hasher ? hasher.apply(this, arguments) : key);
+      if (!has$1(cache, address)) cache[address] = func.apply(this, arguments);
+      return cache[address];
+    };
+    memoize.cache = {};
+    return memoize;
+  }
+
+  // Delays a function for the given number of milliseconds, and then calls
+  // it with the arguments supplied.
+  var delay = restArguments(function(func, wait, args) {
+    return setTimeout(function() {
+      return func.apply(null, args);
+    }, wait);
+  });
+
+  // Defers a function, scheduling it to run after the current call stack has
+  // cleared.
+  var defer = partial(delay, _$1, 1);
+
+  // Returns a function, that, when invoked, will only be triggered at most once
+  // during a given window of time. Normally, the throttled function will run
+  // as much as it can, without ever going more than once per `wait` duration;
+  // but if you'd like to disable the execution on the leading edge, pass
+  // `{leading: false}`. To disable execution on the trailing edge, ditto.
+  function throttle(func, wait, options) {
+    var timeout, context, args, result;
+    var previous = 0;
+    if (!options) options = {};
+
+    var later = function() {
+      previous = options.leading === false ? 0 : now();
+      timeout = null;
+      result = func.apply(context, args);
+      if (!timeout) context = args = null;
+    };
+
+    var throttled = function() {
+      var _now = now();
+      if (!previous && options.leading === false) previous = _now;
+      var remaining = wait - (_now - previous);
+      context = this;
+      args = arguments;
+      if (remaining <= 0 || remaining > wait) {
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
+        previous = _now;
+        result = func.apply(context, args);
+        if (!timeout) context = args = null;
+      } else if (!timeout && options.trailing !== false) {
+        timeout = setTimeout(later, remaining);
+      }
+      return result;
+    };
+
+    throttled.cancel = function() {
+      clearTimeout(timeout);
+      previous = 0;
+      timeout = context = args = null;
+    };
+
+    return throttled;
+  }
+
+  // When a sequence of calls of the returned function ends, the argument
+  // function is triggered. The end of a sequence is defined by the `wait`
+  // parameter. If `immediate` is passed, the argument function will be
+  // triggered at the beginning of the sequence instead of at the end.
+  function debounce(func, wait, immediate) {
+    var timeout, previous, args, result, context;
+
+    var later = function() {
+      var passed = now() - previous;
+      if (wait > passed) {
+        timeout = setTimeout(later, wait - passed);
+      } else {
+        timeout = null;
+        if (!immediate) result = func.apply(context, args);
+        // This check is needed because `func` can recursively invoke `debounced`.
+        if (!timeout) args = context = null;
+      }
+    };
+
+    var debounced = restArguments(function(_args) {
+      context = this;
+      args = _args;
+      previous = now();
+      if (!timeout) {
+        timeout = setTimeout(later, wait);
+        if (immediate) result = func.apply(context, args);
+      }
+      return result;
+    });
+
+    debounced.cancel = function() {
+      clearTimeout(timeout);
+      timeout = args = context = null;
+    };
+
+    return debounced;
+  }
+
+  // Returns the first function passed as an argument to the second,
+  // allowing you to adjust arguments, run code before and after, and
+  // conditionally execute the original function.
+  function wrap(func, wrapper) {
+    return partial(wrapper, func);
+  }
+
+  // Returns a negated version of the passed-in predicate.
+  function negate(predicate) {
+    return function() {
+      return !predicate.apply(this, arguments);
+    };
+  }
+
+  // Returns a function that is the composition of a list of functions, each
+  // consuming the return value of the function that follows.
+  function compose() {
+    var args = arguments;
+    var start = args.length - 1;
+    return function() {
+      var i = start;
+      var result = args[start].apply(this, arguments);
+      while (i--) result = args[i].call(this, result);
+      return result;
+    };
+  }
+
+  // Returns a function that will only be executed on and after the Nth call.
+  function after(times, func) {
+    return function() {
+      if (--times < 1) {
+        return func.apply(this, arguments);
+      }
+    };
+  }
+
+  // Returns a function that will only be executed up to (but not including) the
+  // Nth call.
+  function before(times, func) {
+    var memo;
+    return function() {
+      if (--times > 0) {
+        memo = func.apply(this, arguments);
+      }
+      if (times <= 1) func = null;
+      return memo;
+    };
+  }
+
+  // Returns a function that will be executed at most one time, no matter how
+  // often you call it. Useful for lazy initialization.
+  var once = partial(before, 2);
+
+  // Returns the first key on an object that passes a truth test.
+  function findKey(obj, predicate, context) {
+    predicate = cb(predicate, context);
+    var _keys = keys(obj), key;
+    for (var i = 0, length = _keys.length; i < length; i++) {
+      key = _keys[i];
+      if (predicate(obj[key], key, obj)) return key;
+    }
+  }
+
+  // Internal function to generate `_.findIndex` and `_.findLastIndex`.
+  function createPredicateIndexFinder(dir) {
+    return function(array, predicate, context) {
+      predicate = cb(predicate, context);
+      var length = getLength(array);
+      var index = dir > 0 ? 0 : length - 1;
+      for (; index >= 0 && index < length; index += dir) {
+        if (predicate(array[index], index, array)) return index;
+      }
+      return -1;
+    };
+  }
+
+  // Returns the first index on an array-like that passes a truth test.
+  var findIndex = createPredicateIndexFinder(1);
+
+  // Returns the last index on an array-like that passes a truth test.
+  var findLastIndex = createPredicateIndexFinder(-1);
+
+  // Use a comparator function to figure out the smallest index at which
+  // an object should be inserted so as to maintain order. Uses binary search.
+  function sortedIndex(array, obj, iteratee, context) {
+    iteratee = cb(iteratee, context, 1);
+    var value = iteratee(obj);
+    var low = 0, high = getLength(array);
+    while (low < high) {
+      var mid = Math.floor((low + high) / 2);
+      if (iteratee(array[mid]) < value) low = mid + 1; else high = mid;
+    }
+    return low;
+  }
+
+  // Internal function to generate the `_.indexOf` and `_.lastIndexOf` functions.
+  function createIndexFinder(dir, predicateFind, sortedIndex) {
+    return function(array, item, idx) {
+      var i = 0, length = getLength(array);
+      if (typeof idx == 'number') {
+        if (dir > 0) {
+          i = idx >= 0 ? idx : Math.max(idx + length, i);
+        } else {
+          length = idx >= 0 ? Math.min(idx + 1, length) : idx + length + 1;
+        }
+      } else if (sortedIndex && idx && length) {
+        idx = sortedIndex(array, item);
+        return array[idx] === item ? idx : -1;
+      }
+      if (item !== item) {
+        idx = predicateFind(slice.call(array, i, length), isNaN$1);
+        return idx >= 0 ? idx + i : -1;
+      }
+      for (idx = dir > 0 ? i : length - 1; idx >= 0 && idx < length; idx += dir) {
+        if (array[idx] === item) return idx;
+      }
+      return -1;
+    };
+  }
+
+  // Return the position of the first occurrence of an item in an array,
+  // or -1 if the item is not included in the array.
+  // If the array is large and already in sort order, pass `true`
+  // for **isSorted** to use binary search.
+  var indexOf = createIndexFinder(1, findIndex, sortedIndex);
+
+  // Return the position of the last occurrence of an item in an array,
+  // or -1 if the item is not included in the array.
+  var lastIndexOf = createIndexFinder(-1, findLastIndex);
+
+  // Return the first value which passes a truth test.
+  function find(obj, predicate, context) {
+    var keyFinder = isArrayLike(obj) ? findIndex : findKey;
+    var key = keyFinder(obj, predicate, context);
+    if (key !== void 0 && key !== -1) return obj[key];
+  }
+
+  // Convenience version of a common use case of `_.find`: getting the first
+  // object containing specific `key:value` pairs.
+  function findWhere(obj, attrs) {
+    return find(obj, matcher(attrs));
+  }
+
+  // The cornerstone for collection functions, an `each`
+  // implementation, aka `forEach`.
+  // Handles raw objects in addition to array-likes. Treats all
+  // sparse array-likes as if they were dense.
+  function each(obj, iteratee, context) {
+    iteratee = optimizeCb(iteratee, context);
+    var i, length;
+    if (isArrayLike(obj)) {
+      for (i = 0, length = obj.length; i < length; i++) {
+        iteratee(obj[i], i, obj);
+      }
+    } else {
+      var _keys = keys(obj);
+      for (i = 0, length = _keys.length; i < length; i++) {
+        iteratee(obj[_keys[i]], _keys[i], obj);
       }
     }
     return obj;
-  };
+  }
 
-  // Return the results of applying the iterator to each element.
-  // Delegates to **ECMAScript 5**'s native `map` if available.
-  _.map = _.collect = function(obj, iterator, context) {
-    var results = [];
-    if (obj == null) return results;
-    if (nativeMap && obj.map === nativeMap) return obj.map(iterator, context);
-    each(obj, function(value, index, list) {
-      results.push(iterator.call(context, value, index, list));
-    });
+  // Return the results of applying the iteratee to each element.
+  function map(obj, iteratee, context) {
+    iteratee = cb(iteratee, context);
+    var _keys = !isArrayLike(obj) && keys(obj),
+        length = (_keys || obj).length,
+        results = Array(length);
+    for (var index = 0; index < length; index++) {
+      var currentKey = _keys ? _keys[index] : index;
+      results[index] = iteratee(obj[currentKey], currentKey, obj);
+    }
     return results;
-  };
+  }
 
-  var reduceError = 'Reduce of empty array with no initial value';
+  // Internal helper to create a reducing function, iterating left or right.
+  function createReduce(dir) {
+    // Wrap code that reassigns argument variables in a separate function than
+    // the one that accesses `arguments.length` to avoid a perf hit. (#1991)
+    var reducer = function(obj, iteratee, memo, initial) {
+      var _keys = !isArrayLike(obj) && keys(obj),
+          length = (_keys || obj).length,
+          index = dir > 0 ? 0 : length - 1;
+      if (!initial) {
+        memo = obj[_keys ? _keys[index] : index];
+        index += dir;
+      }
+      for (; index >= 0 && index < length; index += dir) {
+        var currentKey = _keys ? _keys[index] : index;
+        memo = iteratee(memo, obj[currentKey], currentKey, obj);
+      }
+      return memo;
+    };
+
+    return function(obj, iteratee, memo, context) {
+      var initial = arguments.length >= 3;
+      return reducer(obj, optimizeCb(iteratee, context, 4), memo, initial);
+    };
+  }
 
   // **Reduce** builds up a single result from a list of values, aka `inject`,
-  // or `foldl`. Delegates to **ECMAScript 5**'s native `reduce` if available.
-  _.reduce = _.foldl = _.inject = function(obj, iterator, memo, context) {
-    var initial = arguments.length > 2;
-    if (obj == null) obj = [];
-    if (nativeReduce && obj.reduce === nativeReduce) {
-      if (context) iterator = _.bind(iterator, context);
-      return initial ? obj.reduce(iterator, memo) : obj.reduce(iterator);
-    }
-    each(obj, function(value, index, list) {
-      if (!initial) {
-        memo = value;
-        initial = true;
-      } else {
-        memo = iterator.call(context, memo, value, index, list);
-      }
-    });
-    if (!initial) throw new TypeError(reduceError);
-    return memo;
-  };
+  // or `foldl`.
+  var reduce = createReduce(1);
 
   // The right-associative version of reduce, also known as `foldr`.
-  // Delegates to **ECMAScript 5**'s native `reduceRight` if available.
-  _.reduceRight = _.foldr = function(obj, iterator, memo, context) {
-    var initial = arguments.length > 2;
-    if (obj == null) obj = [];
-    if (nativeReduceRight && obj.reduceRight === nativeReduceRight) {
-      if (context) iterator = _.bind(iterator, context);
-      return initial ? obj.reduceRight(iterator, memo) : obj.reduceRight(iterator);
-    }
-    var length = obj.length;
-    if (length !== +length) {
-      var keys = _.keys(obj);
-      length = keys.length;
-    }
-    each(obj, function(value, index, list) {
-      index = keys ? keys[--length] : --length;
-      if (!initial) {
-        memo = obj[index];
-        initial = true;
-      } else {
-        memo = iterator.call(context, memo, obj[index], index, list);
-      }
-    });
-    if (!initial) throw new TypeError(reduceError);
-    return memo;
-  };
-
-  // Return the first value which passes a truth test. Aliased as `detect`.
-  _.find = _.detect = function(obj, predicate, context) {
-    var result;
-    any(obj, function(value, index, list) {
-      if (predicate.call(context, value, index, list)) {
-        result = value;
-        return true;
-      }
-    });
-    return result;
-  };
+  var reduceRight = createReduce(-1);
 
   // Return all the elements that pass a truth test.
-  // Delegates to **ECMAScript 5**'s native `filter` if available.
-  // Aliased as `select`.
-  _.filter = _.select = function(obj, predicate, context) {
+  function filter(obj, predicate, context) {
     var results = [];
-    if (obj == null) return results;
-    if (nativeFilter && obj.filter === nativeFilter) return obj.filter(predicate, context);
+    predicate = cb(predicate, context);
     each(obj, function(value, index, list) {
-      if (predicate.call(context, value, index, list)) results.push(value);
+      if (predicate(value, index, list)) results.push(value);
     });
     return results;
-  };
+  }
 
   // Return all the elements for which a truth test fails.
-  _.reject = function(obj, predicate, context) {
-    return _.filter(obj, function(value, index, list) {
-      return !predicate.call(context, value, index, list);
-    }, context);
-  };
+  function reject(obj, predicate, context) {
+    return filter(obj, negate(cb(predicate)), context);
+  }
 
-  // Determine whether all of the elements match a truth test.
-  // Delegates to **ECMAScript 5**'s native `every` if available.
-  // Aliased as `all`.
-  _.every = _.all = function(obj, predicate, context) {
-    predicate || (predicate = _.identity);
-    var result = true;
-    if (obj == null) return result;
-    if (nativeEvery && obj.every === nativeEvery) return obj.every(predicate, context);
-    each(obj, function(value, index, list) {
-      if (!(result = result && predicate.call(context, value, index, list))) return breaker;
-    });
-    return !!result;
-  };
+  // Determine whether all of the elements pass a truth test.
+  function every(obj, predicate, context) {
+    predicate = cb(predicate, context);
+    var _keys = !isArrayLike(obj) && keys(obj),
+        length = (_keys || obj).length;
+    for (var index = 0; index < length; index++) {
+      var currentKey = _keys ? _keys[index] : index;
+      if (!predicate(obj[currentKey], currentKey, obj)) return false;
+    }
+    return true;
+  }
 
-  // Determine if at least one element in the object matches a truth test.
-  // Delegates to **ECMAScript 5**'s native `some` if available.
-  // Aliased as `any`.
-  var any = _.some = _.any = function(obj, predicate, context) {
-    predicate || (predicate = _.identity);
-    var result = false;
-    if (obj == null) return result;
-    if (nativeSome && obj.some === nativeSome) return obj.some(predicate, context);
-    each(obj, function(value, index, list) {
-      if (result || (result = predicate.call(context, value, index, list))) return breaker;
-    });
-    return !!result;
-  };
+  // Determine if at least one element in the object passes a truth test.
+  function some(obj, predicate, context) {
+    predicate = cb(predicate, context);
+    var _keys = !isArrayLike(obj) && keys(obj),
+        length = (_keys || obj).length;
+    for (var index = 0; index < length; index++) {
+      var currentKey = _keys ? _keys[index] : index;
+      if (predicate(obj[currentKey], currentKey, obj)) return true;
+    }
+    return false;
+  }
 
-  // Determine if the array or object contains a given value (using `===`).
-  // Aliased as `include`.
-  _.contains = _.include = function(obj, target) {
-    if (obj == null) return false;
-    if (nativeIndexOf && obj.indexOf === nativeIndexOf) return obj.indexOf(target) != -1;
-    return any(obj, function(value) {
-      return value === target;
-    });
-  };
+  // Determine if the array or object contains a given item (using `===`).
+  function contains(obj, item, fromIndex, guard) {
+    if (!isArrayLike(obj)) obj = values(obj);
+    if (typeof fromIndex != 'number' || guard) fromIndex = 0;
+    return indexOf(obj, item, fromIndex) >= 0;
+  }
 
   // Invoke a method (with arguments) on every item in a collection.
-  _.invoke = function(obj, method) {
-    var args = slice.call(arguments, 2);
-    var isFunc = _.isFunction(method);
-    return _.map(obj, function(value) {
-      return (isFunc ? method : value[method]).apply(value, args);
-    });
-  };
-
-  // Convenience version of a common use case of `map`: fetching a property.
-  _.pluck = function(obj, key) {
-    return _.map(obj, _.property(key));
-  };
-
-  // Convenience version of a common use case of `filter`: selecting only objects
-  // containing specific `key:value` pairs.
-  _.where = function(obj, attrs) {
-    return _.filter(obj, _.matches(attrs));
-  };
-
-  // Convenience version of a common use case of `find`: getting the first object
-  // containing specific `key:value` pairs.
-  _.findWhere = function(obj, attrs) {
-    return _.find(obj, _.matches(attrs));
-  };
-
-  // Return the maximum element or (element-based computation).
-  // Can't optimize arrays of integers longer than 65,535 elements.
-  // See [WebKit Bug 80797](https://bugs.webkit.org/show_bug.cgi?id=80797)
-  _.max = function(obj, iterator, context) {
-    if (!iterator && _.isArray(obj) && obj[0] === +obj[0] && obj.length < 65535) {
-      return Math.max.apply(Math, obj);
+  var invoke = restArguments(function(obj, path, args) {
+    var contextPath, func;
+    if (isFunction$1(path)) {
+      func = path;
+    } else {
+      path = toPath(path);
+      contextPath = path.slice(0, -1);
+      path = path[path.length - 1];
     }
-    var result = -Infinity, lastComputed = -Infinity;
-    each(obj, function(value, index, list) {
-      var computed = iterator ? iterator.call(context, value, index, list) : value;
-      if (computed > lastComputed) {
-        result = value;
-        lastComputed = computed;
+    return map(obj, function(context) {
+      var method = func;
+      if (!method) {
+        if (contextPath && contextPath.length) {
+          context = deepGet(context, contextPath);
+        }
+        if (context == null) return void 0;
+        method = context[path];
       }
+      return method == null ? method : method.apply(context, args);
     });
+  });
+
+  // Convenience version of a common use case of `_.map`: fetching a property.
+  function pluck(obj, key) {
+    return map(obj, property(key));
+  }
+
+  // Convenience version of a common use case of `_.filter`: selecting only
+  // objects containing specific `key:value` pairs.
+  function where(obj, attrs) {
+    return filter(obj, matcher(attrs));
+  }
+
+  // Return the maximum element (or element-based computation).
+  function max(obj, iteratee, context) {
+    var result = -Infinity, lastComputed = -Infinity,
+        value, computed;
+    if (iteratee == null || typeof iteratee == 'number' && typeof obj[0] != 'object' && obj != null) {
+      obj = isArrayLike(obj) ? obj : values(obj);
+      for (var i = 0, length = obj.length; i < length; i++) {
+        value = obj[i];
+        if (value != null && value > result) {
+          result = value;
+        }
+      }
+    } else {
+      iteratee = cb(iteratee, context);
+      each(obj, function(v, index, list) {
+        computed = iteratee(v, index, list);
+        if (computed > lastComputed || computed === -Infinity && result === -Infinity) {
+          result = v;
+          lastComputed = computed;
+        }
+      });
+    }
     return result;
-  };
+  }
 
   // Return the minimum element (or element-based computation).
-  _.min = function(obj, iterator, context) {
-    if (!iterator && _.isArray(obj) && obj[0] === +obj[0] && obj.length < 65535) {
-      return Math.min.apply(Math, obj);
-    }
-    var result = Infinity, lastComputed = Infinity;
-    each(obj, function(value, index, list) {
-      var computed = iterator ? iterator.call(context, value, index, list) : value;
-      if (computed < lastComputed) {
-        result = value;
-        lastComputed = computed;
+  function min(obj, iteratee, context) {
+    var result = Infinity, lastComputed = Infinity,
+        value, computed;
+    if (iteratee == null || typeof iteratee == 'number' && typeof obj[0] != 'object' && obj != null) {
+      obj = isArrayLike(obj) ? obj : values(obj);
+      for (var i = 0, length = obj.length; i < length; i++) {
+        value = obj[i];
+        if (value != null && value < result) {
+          result = value;
+        }
       }
-    });
-    return result;
-  };
-
-  // Shuffle an array, using the modern version of the
-  // [Fisher-Yates shuffle](http://en.wikipedia.org/wiki/Fisher–Yates_shuffle).
-  _.shuffle = function(obj) {
-    var rand;
-    var index = 0;
-    var shuffled = [];
-    each(obj, function(value) {
-      rand = _.random(index++);
-      shuffled[index - 1] = shuffled[rand];
-      shuffled[rand] = value;
-    });
-    return shuffled;
-  };
-
-  // Sample **n** random values from a collection.
-  // If **n** is not specified, returns a single random element.
-  // The internal `guard` argument allows it to work with `map`.
-  _.sample = function(obj, n, guard) {
-    if (n == null || guard) {
-      if (obj.length !== +obj.length) obj = _.values(obj);
-      return obj[_.random(obj.length - 1)];
+    } else {
+      iteratee = cb(iteratee, context);
+      each(obj, function(v, index, list) {
+        computed = iteratee(v, index, list);
+        if (computed < lastComputed || computed === Infinity && result === Infinity) {
+          result = v;
+          lastComputed = computed;
+        }
+      });
     }
-    return _.shuffle(obj).slice(0, Math.max(0, n));
-  };
+    return result;
+  }
 
-  // An internal function to generate lookup iterators.
-  var lookupIterator = function(value) {
-    if (value == null) return _.identity;
-    if (_.isFunction(value)) return value;
-    return _.property(value);
-  };
+  // Sample **n** random values from a collection using the modern version of the
+  // [Fisher-Yates shuffle](https://en.wikipedia.org/wiki/Fisher–Yates_shuffle).
+  // If **n** is not specified, returns a single random element.
+  // The internal `guard` argument allows it to work with `_.map`.
+  function sample(obj, n, guard) {
+    if (n == null || guard) {
+      if (!isArrayLike(obj)) obj = values(obj);
+      return obj[random(obj.length - 1)];
+    }
+    var sample = isArrayLike(obj) ? clone(obj) : values(obj);
+    var length = getLength(sample);
+    n = Math.max(Math.min(n, length), 0);
+    var last = length - 1;
+    for (var index = 0; index < n; index++) {
+      var rand = random(index, last);
+      var temp = sample[index];
+      sample[index] = sample[rand];
+      sample[rand] = temp;
+    }
+    return sample.slice(0, n);
+  }
 
-  // Sort the object's values by a criterion produced by an iterator.
-  _.sortBy = function(obj, iterator, context) {
-    iterator = lookupIterator(iterator);
-    return _.pluck(_.map(obj, function(value, index, list) {
+  // Shuffle a collection.
+  function shuffle(obj) {
+    return sample(obj, Infinity);
+  }
+
+  // Sort the object's values by a criterion produced by an iteratee.
+  function sortBy(obj, iteratee, context) {
+    var index = 0;
+    iteratee = cb(iteratee, context);
+    return pluck(map(obj, function(value, key, list) {
       return {
         value: value,
-        index: index,
-        criteria: iterator.call(context, value, index, list)
+        index: index++,
+        criteria: iteratee(value, key, list)
       };
     }).sort(function(left, right) {
       var a = left.criteria;
@@ -18992,207 +45815,238 @@ return jQuery;
       }
       return left.index - right.index;
     }), 'value');
-  };
+  }
 
   // An internal function used for aggregate "group by" operations.
-  var group = function(behavior) {
-    return function(obj, iterator, context) {
-      var result = {};
-      iterator = lookupIterator(iterator);
+  function group(behavior, partition) {
+    return function(obj, iteratee, context) {
+      var result = partition ? [[], []] : {};
+      iteratee = cb(iteratee, context);
       each(obj, function(value, index) {
-        var key = iterator.call(context, value, index, obj);
-        behavior(result, key, value);
+        var key = iteratee(value, index, obj);
+        behavior(result, value, key);
       });
       return result;
     };
-  };
+  }
 
   // Groups the object's values by a criterion. Pass either a string attribute
   // to group by, or a function that returns the criterion.
-  _.groupBy = group(function(result, key, value) {
-    _.has(result, key) ? result[key].push(value) : result[key] = [value];
+  var groupBy = group(function(result, value, key) {
+    if (has$1(result, key)) result[key].push(value); else result[key] = [value];
   });
 
-  // Indexes the object's values by a criterion, similar to `groupBy`, but for
+  // Indexes the object's values by a criterion, similar to `_.groupBy`, but for
   // when you know that your index values will be unique.
-  _.indexBy = group(function(result, key, value) {
+  var indexBy = group(function(result, value, key) {
     result[key] = value;
   });
 
   // Counts instances of an object that group by a certain criterion. Pass
   // either a string attribute to count by, or a function that returns the
   // criterion.
-  _.countBy = group(function(result, key) {
-    _.has(result, key) ? result[key]++ : result[key] = 1;
+  var countBy = group(function(result, value, key) {
+    if (has$1(result, key)) result[key]++; else result[key] = 1;
   });
 
-  // Use a comparator function to figure out the smallest index at which
-  // an object should be inserted so as to maintain order. Uses binary search.
-  _.sortedIndex = function(array, obj, iterator, context) {
-    iterator = lookupIterator(iterator);
-    var value = iterator.call(context, obj);
-    var low = 0, high = array.length;
-    while (low < high) {
-      var mid = (low + high) >>> 1;
-      iterator.call(context, array[mid]) < value ? low = mid + 1 : high = mid;
-    }
-    return low;
-  };
+  // Split a collection into two arrays: one whose elements all pass the given
+  // truth test, and one whose elements all do not pass the truth test.
+  var partition = group(function(result, value, pass) {
+    result[pass ? 0 : 1].push(value);
+  }, true);
 
   // Safely create a real, live array from anything iterable.
-  _.toArray = function(obj) {
+  var reStrSymbol = /[^\ud800-\udfff]|[\ud800-\udbff][\udc00-\udfff]|[\ud800-\udfff]/g;
+  function toArray(obj) {
     if (!obj) return [];
-    if (_.isArray(obj)) return slice.call(obj);
-    if (obj.length === +obj.length) return _.map(obj, _.identity);
-    return _.values(obj);
-  };
+    if (isArray(obj)) return slice.call(obj);
+    if (isString(obj)) {
+      // Keep surrogate pair characters together.
+      return obj.match(reStrSymbol);
+    }
+    if (isArrayLike(obj)) return map(obj, identity);
+    return values(obj);
+  }
 
-  // Return the number of elements in an object.
-  _.size = function(obj) {
+  // Return the number of elements in a collection.
+  function size(obj) {
     if (obj == null) return 0;
-    return (obj.length === +obj.length) ? obj.length : _.keys(obj).length;
-  };
+    return isArrayLike(obj) ? obj.length : keys(obj).length;
+  }
 
-  // Array Functions
-  // ---------------
+  // Internal `_.pick` helper function to determine whether `key` is an enumerable
+  // property name of `obj`.
+  function keyInObj(value, key, obj) {
+    return key in obj;
+  }
 
-  // Get the first element of an array. Passing **n** will return the first N
-  // values in the array. Aliased as `head` and `take`. The **guard** check
-  // allows it to work with `_.map`.
-  _.first = _.head = _.take = function(array, n, guard) {
-    if (array == null) return void 0;
-    if ((n == null) || guard) return array[0];
-    if (n < 0) return [];
-    return slice.call(array, 0, n);
-  };
+  // Return a copy of the object only containing the allowed properties.
+  var pick = restArguments(function(obj, keys) {
+    var result = {}, iteratee = keys[0];
+    if (obj == null) return result;
+    if (isFunction$1(iteratee)) {
+      if (keys.length > 1) iteratee = optimizeCb(iteratee, keys[1]);
+      keys = allKeys(obj);
+    } else {
+      iteratee = keyInObj;
+      keys = flatten$1(keys, false, false);
+      obj = Object(obj);
+    }
+    for (var i = 0, length = keys.length; i < length; i++) {
+      var key = keys[i];
+      var value = obj[key];
+      if (iteratee(value, key, obj)) result[key] = value;
+    }
+    return result;
+  });
+
+  // Return a copy of the object without the disallowed properties.
+  var omit = restArguments(function(obj, keys) {
+    var iteratee = keys[0], context;
+    if (isFunction$1(iteratee)) {
+      iteratee = negate(iteratee);
+      if (keys.length > 1) context = keys[1];
+    } else {
+      keys = map(flatten$1(keys, false, false), String);
+      iteratee = function(value, key) {
+        return !contains(keys, key);
+      };
+    }
+    return pick(obj, iteratee, context);
+  });
 
   // Returns everything but the last entry of the array. Especially useful on
   // the arguments object. Passing **n** will return all the values in
-  // the array, excluding the last N. The **guard** check allows it to work with
-  // `_.map`.
-  _.initial = function(array, n, guard) {
-    return slice.call(array, 0, array.length - ((n == null) || guard ? 1 : n));
-  };
+  // the array, excluding the last N.
+  function initial(array, n, guard) {
+    return slice.call(array, 0, Math.max(0, array.length - (n == null || guard ? 1 : n)));
+  }
+
+  // Get the first element of an array. Passing **n** will return the first N
+  // values in the array. The **guard** check allows it to work with `_.map`.
+  function first(array, n, guard) {
+    if (array == null || array.length < 1) return n == null || guard ? void 0 : [];
+    if (n == null || guard) return array[0];
+    return initial(array, array.length - n);
+  }
+
+  // Returns everything but the first entry of the `array`. Especially useful on
+  // the `arguments` object. Passing an **n** will return the rest N values in the
+  // `array`.
+  function rest(array, n, guard) {
+    return slice.call(array, n == null || guard ? 1 : n);
+  }
 
   // Get the last element of an array. Passing **n** will return the last N
-  // values in the array. The **guard** check allows it to work with `_.map`.
-  _.last = function(array, n, guard) {
-    if (array == null) return void 0;
-    if ((n == null) || guard) return array[array.length - 1];
-    return slice.call(array, Math.max(array.length - n, 0));
-  };
-
-  // Returns everything but the first entry of the array. Aliased as `tail` and `drop`.
-  // Especially useful on the arguments object. Passing an **n** will return
-  // the rest N values in the array. The **guard**
-  // check allows it to work with `_.map`.
-  _.rest = _.tail = _.drop = function(array, n, guard) {
-    return slice.call(array, (n == null) || guard ? 1 : n);
-  };
+  // values in the array.
+  function last(array, n, guard) {
+    if (array == null || array.length < 1) return n == null || guard ? void 0 : [];
+    if (n == null || guard) return array[array.length - 1];
+    return rest(array, Math.max(0, array.length - n));
+  }
 
   // Trim out all falsy values from an array.
-  _.compact = function(array) {
-    return _.filter(array, _.identity);
-  };
+  function compact(array) {
+    return filter(array, Boolean);
+  }
 
-  // Internal implementation of a recursive `flatten` function.
-  var flatten = function(input, shallow, output) {
-    if (shallow && _.every(input, _.isArray)) {
-      return concat.apply(output, input);
-    }
-    each(input, function(value) {
-      if (_.isArray(value) || _.isArguments(value)) {
-        shallow ? push.apply(output, value) : flatten(value, shallow, output);
-      } else {
-        output.push(value);
-      }
-    });
-    return output;
-  };
-
-  // Flatten out an array, either recursively (by default), or just one level.
-  _.flatten = function(array, shallow) {
-    return flatten(array, shallow, []);
-  };
-
-  // Return a version of the array that does not contain the specified value(s).
-  _.without = function(array) {
-    return _.difference(array, slice.call(arguments, 1));
-  };
-
-  // Split an array into two arrays: one whose elements all satisfy the given
-  // predicate, and one whose elements all do not satisfy the predicate.
-  _.partition = function(array, predicate) {
-    var pass = [], fail = [];
-    each(array, function(elem) {
-      (predicate(elem) ? pass : fail).push(elem);
-    });
-    return [pass, fail];
-  };
-
-  // Produce a duplicate-free version of the array. If the array has already
-  // been sorted, you have the option of using a faster algorithm.
-  // Aliased as `unique`.
-  _.uniq = _.unique = function(array, isSorted, iterator, context) {
-    if (_.isFunction(isSorted)) {
-      context = iterator;
-      iterator = isSorted;
-      isSorted = false;
-    }
-    var initial = iterator ? _.map(array, iterator, context) : array;
-    var results = [];
-    var seen = [];
-    each(initial, function(value, index) {
-      if (isSorted ? (!index || seen[seen.length - 1] !== value) : !_.contains(seen, value)) {
-        seen.push(value);
-        results.push(array[index]);
-      }
-    });
-    return results;
-  };
-
-  // Produce an array that contains the union: each distinct element from all of
-  // the passed-in arrays.
-  _.union = function() {
-    return _.uniq(_.flatten(arguments, true));
-  };
-
-  // Produce an array that contains every item shared between all the
-  // passed-in arrays.
-  _.intersection = function(array) {
-    var rest = slice.call(arguments, 1);
-    return _.filter(_.uniq(array), function(item) {
-      return _.every(rest, function(other) {
-        return _.contains(other, item);
-      });
-    });
-  };
+  // Flatten out an array, either recursively (by default), or up to `depth`.
+  // Passing `true` or `false` as `depth` means `1` or `Infinity`, respectively.
+  function flatten(array, depth) {
+    return flatten$1(array, depth, false);
+  }
 
   // Take the difference between one array and a number of other arrays.
   // Only the elements present in just the first array will remain.
-  _.difference = function(array) {
-    var rest = concat.apply(ArrayProto, slice.call(arguments, 1));
-    return _.filter(array, function(value){ return !_.contains(rest, value); });
-  };
+  var difference = restArguments(function(array, rest) {
+    rest = flatten$1(rest, true, true);
+    return filter(array, function(value){
+      return !contains(rest, value);
+    });
+  });
+
+  // Return a version of the array that does not contain the specified value(s).
+  var without = restArguments(function(array, otherArrays) {
+    return difference(array, otherArrays);
+  });
+
+  // Produce a duplicate-free version of the array. If the array has already
+  // been sorted, you have the option of using a faster algorithm.
+  // The faster algorithm will not work with an iteratee if the iteratee
+  // is not a one-to-one function, so providing an iteratee will disable
+  // the faster algorithm.
+  function uniq(array, isSorted, iteratee, context) {
+    if (!isBoolean(isSorted)) {
+      context = iteratee;
+      iteratee = isSorted;
+      isSorted = false;
+    }
+    if (iteratee != null) iteratee = cb(iteratee, context);
+    var result = [];
+    var seen = [];
+    for (var i = 0, length = getLength(array); i < length; i++) {
+      var value = array[i],
+          computed = iteratee ? iteratee(value, i, array) : value;
+      if (isSorted && !iteratee) {
+        if (!i || seen !== computed) result.push(value);
+        seen = computed;
+      } else if (iteratee) {
+        if (!contains(seen, computed)) {
+          seen.push(computed);
+          result.push(value);
+        }
+      } else if (!contains(result, value)) {
+        result.push(value);
+      }
+    }
+    return result;
+  }
+
+  // Produce an array that contains the union: each distinct element from all of
+  // the passed-in arrays.
+  var union = restArguments(function(arrays) {
+    return uniq(flatten$1(arrays, true, true));
+  });
+
+  // Produce an array that contains every item shared between all the
+  // passed-in arrays.
+  function intersection(array) {
+    var result = [];
+    var argsLength = arguments.length;
+    for (var i = 0, length = getLength(array); i < length; i++) {
+      var item = array[i];
+      if (contains(result, item)) continue;
+      var j;
+      for (j = 1; j < argsLength; j++) {
+        if (!contains(arguments[j], item)) break;
+      }
+      if (j === argsLength) result.push(item);
+    }
+    return result;
+  }
+
+  // Complement of zip. Unzip accepts an array of arrays and groups
+  // each array's elements on shared indices.
+  function unzip(array) {
+    var length = array && max(array, getLength).length || 0;
+    var result = Array(length);
+
+    for (var index = 0; index < length; index++) {
+      result[index] = pluck(array, index);
+    }
+    return result;
+  }
 
   // Zip together multiple lists into a single array -- elements that share
   // an index go together.
-  _.zip = function() {
-    var length = _.max(_.pluck(arguments, 'length').concat(0));
-    var results = new Array(length);
-    for (var i = 0; i < length; i++) {
-      results[i] = _.pluck(arguments, '' + i);
-    }
-    return results;
-  };
+  var zip = restArguments(unzip);
 
   // Converts lists into objects. Pass either a single array of `[key, value]`
   // pairs, or two parallel arrays of the same length -- one of keys, and one of
-  // the corresponding values.
-  _.object = function(list, values) {
-    if (list == null) return {};
+  // the corresponding values. Passing by pairs is the reverse of `_.pairs`.
+  function object(list, values) {
     var result = {};
-    for (var i = 0, length = list.length; i < length; i++) {
+    for (var i = 0, length = getLength(list); i < length; i++) {
       if (values) {
         result[list[i]] = values[i];
       } else {
@@ -19200,806 +46054,248 @@ return jQuery;
       }
     }
     return result;
-  };
-
-  // If the browser doesn't supply us with indexOf (I'm looking at you, **MSIE**),
-  // we need this function. Return the position of the first occurrence of an
-  // item in an array, or -1 if the item is not included in the array.
-  // Delegates to **ECMAScript 5**'s native `indexOf` if available.
-  // If the array is large and already in sort order, pass `true`
-  // for **isSorted** to use binary search.
-  _.indexOf = function(array, item, isSorted) {
-    if (array == null) return -1;
-    var i = 0, length = array.length;
-    if (isSorted) {
-      if (typeof isSorted == 'number') {
-        i = (isSorted < 0 ? Math.max(0, length + isSorted) : isSorted);
-      } else {
-        i = _.sortedIndex(array, item);
-        return array[i] === item ? i : -1;
-      }
-    }
-    if (nativeIndexOf && array.indexOf === nativeIndexOf) return array.indexOf(item, isSorted);
-    for (; i < length; i++) if (array[i] === item) return i;
-    return -1;
-  };
-
-  // Delegates to **ECMAScript 5**'s native `lastIndexOf` if available.
-  _.lastIndexOf = function(array, item, from) {
-    if (array == null) return -1;
-    var hasIndex = from != null;
-    if (nativeLastIndexOf && array.lastIndexOf === nativeLastIndexOf) {
-      return hasIndex ? array.lastIndexOf(item, from) : array.lastIndexOf(item);
-    }
-    var i = (hasIndex ? from : array.length);
-    while (i--) if (array[i] === item) return i;
-    return -1;
-  };
+  }
 
   // Generate an integer Array containing an arithmetic progression. A port of
   // the native Python `range()` function. See
-  // [the Python documentation](http://docs.python.org/library/functions.html#range).
-  _.range = function(start, stop, step) {
-    if (arguments.length <= 1) {
+  // [the Python documentation](https://docs.python.org/library/functions.html#range).
+  function range(start, stop, step) {
+    if (stop == null) {
       stop = start || 0;
       start = 0;
     }
-    step = arguments[2] || 1;
+    if (!step) {
+      step = stop < start ? -1 : 1;
+    }
 
     var length = Math.max(Math.ceil((stop - start) / step), 0);
-    var idx = 0;
-    var range = new Array(length);
+    var range = Array(length);
 
-    while(idx < length) {
-      range[idx++] = start;
-      start += step;
+    for (var idx = 0; idx < length; idx++, start += step) {
+      range[idx] = start;
     }
 
     return range;
-  };
-
-  // Function (ahem) Functions
-  // ------------------
-
-  // Reusable constructor function for prototype setting.
-  var ctor = function(){};
-
-  // Create a function bound to a given object (assigning `this`, and arguments,
-  // optionally). Delegates to **ECMAScript 5**'s native `Function.bind` if
-  // available.
-  _.bind = function(func, context) {
-    var args, bound;
-    if (nativeBind && func.bind === nativeBind) return nativeBind.apply(func, slice.call(arguments, 1));
-    if (!_.isFunction(func)) throw new TypeError;
-    args = slice.call(arguments, 2);
-    return bound = function() {
-      if (!(this instanceof bound)) return func.apply(context, args.concat(slice.call(arguments)));
-      ctor.prototype = func.prototype;
-      var self = new ctor;
-      ctor.prototype = null;
-      var result = func.apply(self, args.concat(slice.call(arguments)));
-      if (Object(result) === result) return result;
-      return self;
-    };
-  };
-
-  // Partially apply a function by creating a version that has had some of its
-  // arguments pre-filled, without changing its dynamic `this` context. _ acts
-  // as a placeholder, allowing any combination of arguments to be pre-filled.
-  _.partial = function(func) {
-    var boundArgs = slice.call(arguments, 1);
-    return function() {
-      var position = 0;
-      var args = boundArgs.slice();
-      for (var i = 0, length = args.length; i < length; i++) {
-        if (args[i] === _) args[i] = arguments[position++];
-      }
-      while (position < arguments.length) args.push(arguments[position++]);
-      return func.apply(this, args);
-    };
-  };
-
-  // Bind a number of an object's methods to that object. Remaining arguments
-  // are the method names to be bound. Useful for ensuring that all callbacks
-  // defined on an object belong to it.
-  _.bindAll = function(obj) {
-    var funcs = slice.call(arguments, 1);
-    if (funcs.length === 0) throw new Error('bindAll must be passed function names');
-    each(funcs, function(f) { obj[f] = _.bind(obj[f], obj); });
-    return obj;
-  };
-
-  // Memoize an expensive function by storing its results.
-  _.memoize = function(func, hasher) {
-    var memo = {};
-    hasher || (hasher = _.identity);
-    return function() {
-      var key = hasher.apply(this, arguments);
-      return _.has(memo, key) ? memo[key] : (memo[key] = func.apply(this, arguments));
-    };
-  };
-
-  // Delays a function for the given number of milliseconds, and then calls
-  // it with the arguments supplied.
-  _.delay = function(func, wait) {
-    var args = slice.call(arguments, 2);
-    return setTimeout(function(){ return func.apply(null, args); }, wait);
-  };
-
-  // Defers a function, scheduling it to run after the current call stack has
-  // cleared.
-  _.defer = function(func) {
-    return _.delay.apply(_, [func, 1].concat(slice.call(arguments, 1)));
-  };
-
-  // Returns a function, that, when invoked, will only be triggered at most once
-  // during a given window of time. Normally, the throttled function will run
-  // as much as it can, without ever going more than once per `wait` duration;
-  // but if you'd like to disable the execution on the leading edge, pass
-  // `{leading: false}`. To disable execution on the trailing edge, ditto.
-  _.throttle = function(func, wait, options) {
-    var context, args, result;
-    var timeout = null;
-    var previous = 0;
-    options || (options = {});
-    var later = function() {
-      previous = options.leading === false ? 0 : _.now();
-      timeout = null;
-      result = func.apply(context, args);
-      context = args = null;
-    };
-    return function() {
-      var now = _.now();
-      if (!previous && options.leading === false) previous = now;
-      var remaining = wait - (now - previous);
-      context = this;
-      args = arguments;
-      if (remaining <= 0) {
-        clearTimeout(timeout);
-        timeout = null;
-        previous = now;
-        result = func.apply(context, args);
-        context = args = null;
-      } else if (!timeout && options.trailing !== false) {
-        timeout = setTimeout(later, remaining);
-      }
-      return result;
-    };
-  };
-
-  // Returns a function, that, as long as it continues to be invoked, will not
-  // be triggered. The function will be called after it stops being called for
-  // N milliseconds. If `immediate` is passed, trigger the function on the
-  // leading edge, instead of the trailing.
-  _.debounce = function(func, wait, immediate) {
-    var timeout, args, context, timestamp, result;
-
-    var later = function() {
-      var last = _.now() - timestamp;
-      if (last < wait) {
-        timeout = setTimeout(later, wait - last);
-      } else {
-        timeout = null;
-        if (!immediate) {
-          result = func.apply(context, args);
-          context = args = null;
-        }
-      }
-    };
-
-    return function() {
-      context = this;
-      args = arguments;
-      timestamp = _.now();
-      var callNow = immediate && !timeout;
-      if (!timeout) {
-        timeout = setTimeout(later, wait);
-      }
-      if (callNow) {
-        result = func.apply(context, args);
-        context = args = null;
-      }
-
-      return result;
-    };
-  };
-
-  // Returns a function that will be executed at most one time, no matter how
-  // often you call it. Useful for lazy initialization.
-  _.once = function(func) {
-    var ran = false, memo;
-    return function() {
-      if (ran) return memo;
-      ran = true;
-      memo = func.apply(this, arguments);
-      func = null;
-      return memo;
-    };
-  };
-
-  // Returns the first function passed as an argument to the second,
-  // allowing you to adjust arguments, run code before and after, and
-  // conditionally execute the original function.
-  _.wrap = function(func, wrapper) {
-    return _.partial(wrapper, func);
-  };
-
-  // Returns a function that is the composition of a list of functions, each
-  // consuming the return value of the function that follows.
-  _.compose = function() {
-    var funcs = arguments;
-    return function() {
-      var args = arguments;
-      for (var i = funcs.length - 1; i >= 0; i--) {
-        args = [funcs[i].apply(this, args)];
-      }
-      return args[0];
-    };
-  };
-
-  // Returns a function that will only be executed after being called N times.
-  _.after = function(times, func) {
-    return function() {
-      if (--times < 1) {
-        return func.apply(this, arguments);
-      }
-    };
-  };
-
-  // Object Functions
-  // ----------------
-
-  // Retrieve the names of an object's properties.
-  // Delegates to **ECMAScript 5**'s native `Object.keys`
-  _.keys = function(obj) {
-    if (!_.isObject(obj)) return [];
-    if (nativeKeys) return nativeKeys(obj);
-    var keys = [];
-    for (var key in obj) if (_.has(obj, key)) keys.push(key);
-    return keys;
-  };
-
-  // Retrieve the values of an object's properties.
-  _.values = function(obj) {
-    var keys = _.keys(obj);
-    var length = keys.length;
-    var values = new Array(length);
-    for (var i = 0; i < length; i++) {
-      values[i] = obj[keys[i]];
-    }
-    return values;
-  };
-
-  // Convert an object into a list of `[key, value]` pairs.
-  _.pairs = function(obj) {
-    var keys = _.keys(obj);
-    var length = keys.length;
-    var pairs = new Array(length);
-    for (var i = 0; i < length; i++) {
-      pairs[i] = [keys[i], obj[keys[i]]];
-    }
-    return pairs;
-  };
-
-  // Invert the keys and values of an object. The values must be serializable.
-  _.invert = function(obj) {
-    var result = {};
-    var keys = _.keys(obj);
-    for (var i = 0, length = keys.length; i < length; i++) {
-      result[obj[keys[i]]] = keys[i];
-    }
-    return result;
-  };
-
-  // Return a sorted list of the function names available on the object.
-  // Aliased as `methods`
-  _.functions = _.methods = function(obj) {
-    var names = [];
-    for (var key in obj) {
-      if (_.isFunction(obj[key])) names.push(key);
-    }
-    return names.sort();
-  };
-
-  // Extend a given object with all the properties in passed-in object(s).
-  _.extend = function(obj) {
-    each(slice.call(arguments, 1), function(source) {
-      if (source) {
-        for (var prop in source) {
-          obj[prop] = source[prop];
-        }
-      }
-    });
-    return obj;
-  };
-
-  // Return a copy of the object only containing the whitelisted properties.
-  _.pick = function(obj) {
-    var copy = {};
-    var keys = concat.apply(ArrayProto, slice.call(arguments, 1));
-    each(keys, function(key) {
-      if (key in obj) copy[key] = obj[key];
-    });
-    return copy;
-  };
-
-   // Return a copy of the object without the blacklisted properties.
-  _.omit = function(obj) {
-    var copy = {};
-    var keys = concat.apply(ArrayProto, slice.call(arguments, 1));
-    for (var key in obj) {
-      if (!_.contains(keys, key)) copy[key] = obj[key];
-    }
-    return copy;
-  };
-
-  // Fill in a given object with default properties.
-  _.defaults = function(obj) {
-    each(slice.call(arguments, 1), function(source) {
-      if (source) {
-        for (var prop in source) {
-          if (obj[prop] === void 0) obj[prop] = source[prop];
-        }
-      }
-    });
-    return obj;
-  };
-
-  // Create a (shallow-cloned) duplicate of an object.
-  _.clone = function(obj) {
-    if (!_.isObject(obj)) return obj;
-    return _.isArray(obj) ? obj.slice() : _.extend({}, obj);
-  };
-
-  // Invokes interceptor with the obj, and then returns obj.
-  // The primary purpose of this method is to "tap into" a method chain, in
-  // order to perform operations on intermediate results within the chain.
-  _.tap = function(obj, interceptor) {
-    interceptor(obj);
-    return obj;
-  };
-
-  // Internal recursive comparison function for `isEqual`.
-  var eq = function(a, b, aStack, bStack) {
-    // Identical objects are equal. `0 === -0`, but they aren't identical.
-    // See the [Harmony `egal` proposal](http://wiki.ecmascript.org/doku.php?id=harmony:egal).
-    if (a === b) return a !== 0 || 1 / a == 1 / b;
-    // A strict comparison is necessary because `null == undefined`.
-    if (a == null || b == null) return a === b;
-    // Unwrap any wrapped objects.
-    if (a instanceof _) a = a._wrapped;
-    if (b instanceof _) b = b._wrapped;
-    // Compare `[[Class]]` names.
-    var className = toString.call(a);
-    if (className != toString.call(b)) return false;
-    switch (className) {
-      // Strings, numbers, dates, and booleans are compared by value.
-      case '[object String]':
-        // Primitives and their corresponding object wrappers are equivalent; thus, `"5"` is
-        // equivalent to `new String("5")`.
-        return a == String(b);
-      case '[object Number]':
-        // `NaN`s are equivalent, but non-reflexive. An `egal` comparison is performed for
-        // other numeric values.
-        return a != +a ? b != +b : (a == 0 ? 1 / a == 1 / b : a == +b);
-      case '[object Date]':
-      case '[object Boolean]':
-        // Coerce dates and booleans to numeric primitive values. Dates are compared by their
-        // millisecond representations. Note that invalid dates with millisecond representations
-        // of `NaN` are not equivalent.
-        return +a == +b;
-      // RegExps are compared by their source patterns and flags.
-      case '[object RegExp]':
-        return a.source == b.source &&
-               a.global == b.global &&
-               a.multiline == b.multiline &&
-               a.ignoreCase == b.ignoreCase;
-    }
-    if (typeof a != 'object' || typeof b != 'object') return false;
-    // Assume equality for cyclic structures. The algorithm for detecting cyclic
-    // structures is adapted from ES 5.1 section 15.12.3, abstract operation `JO`.
-    var length = aStack.length;
-    while (length--) {
-      // Linear search. Performance is inversely proportional to the number of
-      // unique nested structures.
-      if (aStack[length] == a) return bStack[length] == b;
-    }
-    // Objects with different constructors are not equivalent, but `Object`s
-    // from different frames are.
-    var aCtor = a.constructor, bCtor = b.constructor;
-    if (aCtor !== bCtor && !(_.isFunction(aCtor) && (aCtor instanceof aCtor) &&
-                             _.isFunction(bCtor) && (bCtor instanceof bCtor))
-                        && ('constructor' in a && 'constructor' in b)) {
-      return false;
-    }
-    // Add the first object to the stack of traversed objects.
-    aStack.push(a);
-    bStack.push(b);
-    var size = 0, result = true;
-    // Recursively compare objects and arrays.
-    if (className == '[object Array]') {
-      // Compare array lengths to determine if a deep comparison is necessary.
-      size = a.length;
-      result = size == b.length;
-      if (result) {
-        // Deep compare the contents, ignoring non-numeric properties.
-        while (size--) {
-          if (!(result = eq(a[size], b[size], aStack, bStack))) break;
-        }
-      }
-    } else {
-      // Deep compare objects.
-      for (var key in a) {
-        if (_.has(a, key)) {
-          // Count the expected number of properties.
-          size++;
-          // Deep compare each member.
-          if (!(result = _.has(b, key) && eq(a[key], b[key], aStack, bStack))) break;
-        }
-      }
-      // Ensure that both objects contain the same number of properties.
-      if (result) {
-        for (key in b) {
-          if (_.has(b, key) && !(size--)) break;
-        }
-        result = !size;
-      }
-    }
-    // Remove the first object from the stack of traversed objects.
-    aStack.pop();
-    bStack.pop();
-    return result;
-  };
-
-  // Perform a deep comparison to check if two objects are equal.
-  _.isEqual = function(a, b) {
-    return eq(a, b, [], []);
-  };
-
-  // Is a given array, string, or object empty?
-  // An "empty" object has no enumerable own-properties.
-  _.isEmpty = function(obj) {
-    if (obj == null) return true;
-    if (_.isArray(obj) || _.isString(obj)) return obj.length === 0;
-    for (var key in obj) if (_.has(obj, key)) return false;
-    return true;
-  };
-
-  // Is a given value a DOM element?
-  _.isElement = function(obj) {
-    return !!(obj && obj.nodeType === 1);
-  };
-
-  // Is a given value an array?
-  // Delegates to ECMA5's native Array.isArray
-  _.isArray = nativeIsArray || function(obj) {
-    return toString.call(obj) == '[object Array]';
-  };
-
-  // Is a given variable an object?
-  _.isObject = function(obj) {
-    return obj === Object(obj);
-  };
-
-  // Add some isType methods: isArguments, isFunction, isString, isNumber, isDate, isRegExp.
-  each(['Arguments', 'Function', 'String', 'Number', 'Date', 'RegExp'], function(name) {
-    _['is' + name] = function(obj) {
-      return toString.call(obj) == '[object ' + name + ']';
-    };
-  });
-
-  // Define a fallback version of the method in browsers (ahem, IE), where
-  // there isn't any inspectable "Arguments" type.
-  if (!_.isArguments(arguments)) {
-    _.isArguments = function(obj) {
-      return !!(obj && _.has(obj, 'callee'));
-    };
   }
 
-  // Optimize `isFunction` if appropriate.
-  if (typeof (/./) !== 'function') {
-    _.isFunction = function(obj) {
-      return typeof obj === 'function';
-    };
+  // Chunk a single array into multiple arrays, each containing `count` or fewer
+  // items.
+  function chunk(array, count) {
+    if (count == null || count < 1) return [];
+    var result = [];
+    var i = 0, length = array.length;
+    while (i < length) {
+      result.push(slice.call(array, i, i += count));
+    }
+    return result;
   }
-
-  // Is a given object a finite number?
-  _.isFinite = function(obj) {
-    return isFinite(obj) && !isNaN(parseFloat(obj));
-  };
-
-  // Is the given value `NaN`? (NaN is the only number which does not equal itself).
-  _.isNaN = function(obj) {
-    return _.isNumber(obj) && obj != +obj;
-  };
-
-  // Is a given value a boolean?
-  _.isBoolean = function(obj) {
-    return obj === true || obj === false || toString.call(obj) == '[object Boolean]';
-  };
-
-  // Is a given value equal to null?
-  _.isNull = function(obj) {
-    return obj === null;
-  };
-
-  // Is a given variable undefined?
-  _.isUndefined = function(obj) {
-    return obj === void 0;
-  };
-
-  // Shortcut function for checking if an object has a given property directly
-  // on itself (in other words, not on a prototype).
-  _.has = function(obj, key) {
-    return hasOwnProperty.call(obj, key);
-  };
-
-  // Utility Functions
-  // -----------------
-
-  // Run Underscore.js in *noConflict* mode, returning the `_` variable to its
-  // previous owner. Returns a reference to the Underscore object.
-  _.noConflict = function() {
-    root._ = previousUnderscore;
-    return this;
-  };
-
-  // Keep the identity function around for default iterators.
-  _.identity = function(value) {
-    return value;
-  };
-
-  _.constant = function(value) {
-    return function () {
-      return value;
-    };
-  };
-
-  _.property = function(key) {
-    return function(obj) {
-      return obj[key];
-    };
-  };
-
-  // Returns a predicate for checking whether an object has a given set of `key:value` pairs.
-  _.matches = function(attrs) {
-    return function(obj) {
-      if (obj === attrs) return true; //avoid comparing an object to itself.
-      for (var key in attrs) {
-        if (attrs[key] !== obj[key])
-          return false;
-      }
-      return true;
-    }
-  };
-
-  // Run a function **n** times.
-  _.times = function(n, iterator, context) {
-    var accum = Array(Math.max(0, n));
-    for (var i = 0; i < n; i++) accum[i] = iterator.call(context, i);
-    return accum;
-  };
-
-  // Return a random integer between min and max (inclusive).
-  _.random = function(min, max) {
-    if (max == null) {
-      max = min;
-      min = 0;
-    }
-    return min + Math.floor(Math.random() * (max - min + 1));
-  };
-
-  // A (possibly faster) way to get the current timestamp as an integer.
-  _.now = Date.now || function() { return new Date().getTime(); };
-
-  // List of HTML entities for escaping.
-  var entityMap = {
-    escape: {
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#x27;'
-    }
-  };
-  entityMap.unescape = _.invert(entityMap.escape);
-
-  // Regexes containing the keys and values listed immediately above.
-  var entityRegexes = {
-    escape:   new RegExp('[' + _.keys(entityMap.escape).join('') + ']', 'g'),
-    unescape: new RegExp('(' + _.keys(entityMap.unescape).join('|') + ')', 'g')
-  };
-
-  // Functions for escaping and unescaping strings to/from HTML interpolation.
-  _.each(['escape', 'unescape'], function(method) {
-    _[method] = function(string) {
-      if (string == null) return '';
-      return ('' + string).replace(entityRegexes[method], function(match) {
-        return entityMap[method][match];
-      });
-    };
-  });
-
-  // If the value of the named `property` is a function then invoke it with the
-  // `object` as context; otherwise, return it.
-  _.result = function(object, property) {
-    if (object == null) return void 0;
-    var value = object[property];
-    return _.isFunction(value) ? value.call(object) : value;
-  };
-
-  // Add your own custom functions to the Underscore object.
-  _.mixin = function(obj) {
-    each(_.functions(obj), function(name) {
-      var func = _[name] = obj[name];
-      _.prototype[name] = function() {
-        var args = [this._wrapped];
-        push.apply(args, arguments);
-        return result.call(this, func.apply(_, args));
-      };
-    });
-  };
-
-  // Generate a unique integer id (unique within the entire client session).
-  // Useful for temporary DOM ids.
-  var idCounter = 0;
-  _.uniqueId = function(prefix) {
-    var id = ++idCounter + '';
-    return prefix ? prefix + id : id;
-  };
-
-  // By default, Underscore uses ERB-style template delimiters, change the
-  // following template settings to use alternative delimiters.
-  _.templateSettings = {
-    evaluate    : /<%([\s\S]+?)%>/g,
-    interpolate : /<%=([\s\S]+?)%>/g,
-    escape      : /<%-([\s\S]+?)%>/g
-  };
-
-  // When customizing `templateSettings`, if you don't want to define an
-  // interpolation, evaluation or escaping regex, we need one that is
-  // guaranteed not to match.
-  var noMatch = /(.)^/;
-
-  // Certain characters need to be escaped so that they can be put into a
-  // string literal.
-  var escapes = {
-    "'":      "'",
-    '\\':     '\\',
-    '\r':     'r',
-    '\n':     'n',
-    '\t':     't',
-    '\u2028': 'u2028',
-    '\u2029': 'u2029'
-  };
-
-  var escaper = /\\|'|\r|\n|\t|\u2028|\u2029/g;
-
-  // JavaScript micro-templating, similar to John Resig's implementation.
-  // Underscore templating handles arbitrary delimiters, preserves whitespace,
-  // and correctly escapes quotes within interpolated code.
-  _.template = function(text, data, settings) {
-    var render;
-    settings = _.defaults({}, settings, _.templateSettings);
-
-    // Combine delimiters into one regular expression via alternation.
-    var matcher = new RegExp([
-      (settings.escape || noMatch).source,
-      (settings.interpolate || noMatch).source,
-      (settings.evaluate || noMatch).source
-    ].join('|') + '|$', 'g');
-
-    // Compile the template source, escaping string literals appropriately.
-    var index = 0;
-    var source = "__p+='";
-    text.replace(matcher, function(match, escape, interpolate, evaluate, offset) {
-      source += text.slice(index, offset)
-        .replace(escaper, function(match) { return '\\' + escapes[match]; });
-
-      if (escape) {
-        source += "'+\n((__t=(" + escape + "))==null?'':_.escape(__t))+\n'";
-      }
-      if (interpolate) {
-        source += "'+\n((__t=(" + interpolate + "))==null?'':__t)+\n'";
-      }
-      if (evaluate) {
-        source += "';\n" + evaluate + "\n__p+='";
-      }
-      index = offset + match.length;
-      return match;
-    });
-    source += "';\n";
-
-    // If a variable is not specified, place data values in local scope.
-    if (!settings.variable) source = 'with(obj||{}){\n' + source + '}\n';
-
-    source = "var __t,__p='',__j=Array.prototype.join," +
-      "print=function(){__p+=__j.call(arguments,'');};\n" +
-      source + "return __p;\n";
-
-    try {
-      render = new Function(settings.variable || 'obj', '_', source);
-    } catch (e) {
-      e.source = source;
-      throw e;
-    }
-
-    if (data) return render(data, _);
-    var template = function(data) {
-      return render.call(this, data, _);
-    };
-
-    // Provide the compiled function source as a convenience for precompilation.
-    template.source = 'function(' + (settings.variable || 'obj') + '){\n' + source + '}';
-
-    return template;
-  };
-
-  // Add a "chain" function, which will delegate to the wrapper.
-  _.chain = function(obj) {
-    return _(obj).chain();
-  };
-
-  // OOP
-  // ---------------
-  // If Underscore is called as a function, it returns a wrapped object that
-  // can be used OO-style. This wrapper holds altered versions of all the
-  // underscore functions. Wrapped objects may be chained.
 
   // Helper function to continue chaining intermediate results.
-  var result = function(obj) {
-    return this._chain ? _(obj).chain() : obj;
-  };
+  function chainResult(instance, obj) {
+    return instance._chain ? _$1(obj).chain() : obj;
+  }
 
-  // Add all of the Underscore functions to the wrapper object.
-  _.mixin(_);
+  // Add your own custom functions to the Underscore object.
+  function mixin(obj) {
+    each(functions(obj), function(name) {
+      var func = _$1[name] = obj[name];
+      _$1.prototype[name] = function() {
+        var args = [this._wrapped];
+        push.apply(args, arguments);
+        return chainResult(this, func.apply(_$1, args));
+      };
+    });
+    return _$1;
+  }
 
-  // Add all mutator Array functions to the wrapper.
+  // Add all mutator `Array` functions to the wrapper.
   each(['pop', 'push', 'reverse', 'shift', 'sort', 'splice', 'unshift'], function(name) {
     var method = ArrayProto[name];
-    _.prototype[name] = function() {
+    _$1.prototype[name] = function() {
       var obj = this._wrapped;
-      method.apply(obj, arguments);
-      if ((name == 'shift' || name == 'splice') && obj.length === 0) delete obj[0];
-      return result.call(this, obj);
+      if (obj != null) {
+        method.apply(obj, arguments);
+        if ((name === 'shift' || name === 'splice') && obj.length === 0) {
+          delete obj[0];
+        }
+      }
+      return chainResult(this, obj);
     };
   });
 
-  // Add all accessor Array functions to the wrapper.
+  // Add all accessor `Array` functions to the wrapper.
   each(['concat', 'join', 'slice'], function(name) {
     var method = ArrayProto[name];
-    _.prototype[name] = function() {
-      return result.call(this, method.apply(this._wrapped, arguments));
+    _$1.prototype[name] = function() {
+      var obj = this._wrapped;
+      if (obj != null) obj = method.apply(obj, arguments);
+      return chainResult(this, obj);
     };
   });
 
-  _.extend(_.prototype, {
+  // Named Exports
 
-    // Start chaining a wrapped Underscore object.
-    chain: function() {
-      this._chain = true;
-      return this;
-    },
+  var allExports = {
+    __proto__: null,
+    VERSION: VERSION,
+    restArguments: restArguments,
+    isObject: isObject,
+    isNull: isNull,
+    isUndefined: isUndefined,
+    isBoolean: isBoolean,
+    isElement: isElement,
+    isString: isString,
+    isNumber: isNumber,
+    isDate: isDate,
+    isRegExp: isRegExp,
+    isError: isError,
+    isSymbol: isSymbol,
+    isArrayBuffer: isArrayBuffer,
+    isDataView: isDataView$1,
+    isArray: isArray,
+    isFunction: isFunction$1,
+    isArguments: isArguments$1,
+    isFinite: isFinite$1,
+    isNaN: isNaN$1,
+    isTypedArray: isTypedArray$1,
+    isEmpty: isEmpty,
+    isMatch: isMatch,
+    isEqual: isEqual,
+    isMap: isMap,
+    isWeakMap: isWeakMap,
+    isSet: isSet,
+    isWeakSet: isWeakSet,
+    keys: keys,
+    allKeys: allKeys,
+    values: values,
+    pairs: pairs,
+    invert: invert,
+    functions: functions,
+    methods: functions,
+    extend: extend,
+    extendOwn: extendOwn,
+    assign: extendOwn,
+    defaults: defaults,
+    create: create,
+    clone: clone,
+    tap: tap,
+    get: get,
+    has: has,
+    mapObject: mapObject,
+    identity: identity,
+    constant: constant,
+    noop: noop,
+    toPath: toPath$1,
+    property: property,
+    propertyOf: propertyOf,
+    matcher: matcher,
+    matches: matcher,
+    times: times,
+    random: random,
+    now: now,
+    escape: _escape,
+    unescape: _unescape,
+    templateSettings: templateSettings,
+    template: template,
+    result: result,
+    uniqueId: uniqueId,
+    chain: chain,
+    iteratee: iteratee,
+    partial: partial,
+    bind: bind,
+    bindAll: bindAll,
+    memoize: memoize,
+    delay: delay,
+    defer: defer,
+    throttle: throttle,
+    debounce: debounce,
+    wrap: wrap,
+    negate: negate,
+    compose: compose,
+    after: after,
+    before: before,
+    once: once,
+    findKey: findKey,
+    findIndex: findIndex,
+    findLastIndex: findLastIndex,
+    sortedIndex: sortedIndex,
+    indexOf: indexOf,
+    lastIndexOf: lastIndexOf,
+    find: find,
+    detect: find,
+    findWhere: findWhere,
+    each: each,
+    forEach: each,
+    map: map,
+    collect: map,
+    reduce: reduce,
+    foldl: reduce,
+    inject: reduce,
+    reduceRight: reduceRight,
+    foldr: reduceRight,
+    filter: filter,
+    select: filter,
+    reject: reject,
+    every: every,
+    all: every,
+    some: some,
+    any: some,
+    contains: contains,
+    includes: contains,
+    include: contains,
+    invoke: invoke,
+    pluck: pluck,
+    where: where,
+    max: max,
+    min: min,
+    shuffle: shuffle,
+    sample: sample,
+    sortBy: sortBy,
+    groupBy: groupBy,
+    indexBy: indexBy,
+    countBy: countBy,
+    partition: partition,
+    toArray: toArray,
+    size: size,
+    pick: pick,
+    omit: omit,
+    first: first,
+    head: first,
+    take: first,
+    initial: initial,
+    last: last,
+    rest: rest,
+    tail: rest,
+    drop: rest,
+    compact: compact,
+    flatten: flatten,
+    without: without,
+    uniq: uniq,
+    unique: uniq,
+    union: union,
+    intersection: intersection,
+    difference: difference,
+    unzip: unzip,
+    transpose: unzip,
+    zip: zip,
+    object: object,
+    range: range,
+    chunk: chunk,
+    mixin: mixin,
+    'default': _$1
+  };
 
-    // Extracts the result from a wrapped and chained object.
-    value: function() {
-      return this._wrapped;
-    }
+  // Default Export
 
-  });
+  // Add all of the Underscore functions to the wrapper object.
+  var _ = mixin(allExports);
+  // Legacy Node.js API.
+  _._ = _;
 
-  // AMD registration happens at the end for compatibility with AMD loaders
-  // that may not enforce next-turn semantics on modules. Even though general
-  // practice for AMD registration is to be anonymous, underscore registers
-  // as a named module because, like jQuery, it is a base library that is
-  // popular enough to be bundled in a third party lib, but not be part of
-  // an AMD load request. Those cases could generate an error when an
-  // anonymous define() is called outside of a loader request.
-  if (typeof define === 'function' && define.amd) {
-    define('underscore', [], function() {
-      return _;
-    });
-  }
-}).call(this);
+  return _;
 
+})));
+//# sourceMappingURL=underscore-umd.js.map
+
+}).call(this,typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
 },{}]},{},[1])

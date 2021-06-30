@@ -13,6 +13,7 @@ ToolIntersectionMover = require './intersection-mover'
 ToolIntersectionBuilder = require './intersection-builder'
 ToolRoadBuilder = require './road-builder'
 ToolHighlighter = require './highlighter'
+Tool = require './tool'
 Zoomer = require './zoomer'
 settings = require '../settings'
 
@@ -28,6 +29,7 @@ class Visualizer
     @updateCanvasSize()
     @zoomer = new Zoomer 4, this, true
     @graphics = new Graphics @ctx
+    @tool = new Tool this, true
     @toolRoadbuilder = new ToolRoadBuilder this, true
     @toolIntersectionBuilder = new ToolIntersectionBuilder this, true
     @toolHighlighter = new ToolHighlighter this, true
@@ -130,8 +132,6 @@ class Visualizer
         @graphics.polyline(lane.sourceSegment.source, lane.sourceSegment.target, lane.targetSegment.source, lane.targetSegment.target)
         @graphics.fill('red', 0.2)
     
-    # Falta completar lane.coffee
-
     # Comment-David: This add the road-id and number of lanes to the debug feature
     if @debug
       @ctx.save()
@@ -142,7 +142,6 @@ class Visualizer
 
       # Find the road besides the current road
       _refroads = @world.roads.all()
-
       for _ref in Object.values(_refroads)
         if _ref.source.id == road.target.id and _ref.target.id == road.source.id
           next_road = _ref
@@ -162,12 +161,11 @@ class Visualizer
 
       # This will measure the density according to equations (2) and (3) from
       # https://www.researchgate.net/publication/348225622_Modeling_adaptive_reversible_lanes_A_cellular_automata_approach,
-      # we are taking rho = 1
-
+      # we are taking rho = 1.
       flux_total = flux + next_flux
       percentage = flux/flux_total
-      n_lanes = 2
-      n_lanes_next = 2
+      n_lanes = 3
+      n_lanes_next = 3
 
       density = (n_lanes_next/n_lanes) * (percentage) / (1 - percentage)
 

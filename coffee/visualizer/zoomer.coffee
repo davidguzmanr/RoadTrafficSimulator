@@ -27,6 +27,16 @@ class Zoomer extends Tool
     y = centerOffset.y // (@defaultZoom * gridSize) * gridSize
     new Rect x, y, gridSize, gridSize
 
+  # Comment-David: get the coordinates of where you click
+  toPointCoords: (point) ->
+    gridSize = settings.gridSize
+    centerOffset = point.subtract(@center).divide(@scale)
+
+    x_center = centerOffset.x / (@defaultZoom * gridSize) * gridSize
+    y_center = centerOffset.y / (@defaultZoom * gridSize) * gridSize
+
+    new Point x_center, y_center
+
   getBoundingBox: (cell1, cell2) ->
     cell1 ?= @toCellCoords new Point 0, 0
     cell2 ?= @toCellCoords new Point @canvas.width, @canvas.height

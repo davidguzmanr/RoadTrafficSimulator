@@ -5,6 +5,7 @@ require '../helpers'
 LanePosition = require './lane-position'
 Curve = require '../geom/curve'
 _ = require 'underscore'
+beta = require '@stdlib/random/base/beta'
 
 class Trajectory
   constructor: (@car, lane, position) ->
@@ -69,10 +70,11 @@ class Trajectory
       turnNumber = sourceLane.getTurnDirection(nextLane)
 
     throw Error 'no U-turns are allowed' if turnNumber is 3
-    if turnNumber is 0 and not sourceLane.isLeftmost
-      throw Error 'no left turns from this lane'
-    if turnNumber is 2 and not sourceLane.isRightmost
-      throw Error 'no right turns from this lane'
+    #Mario-Comment: This causes traffic issues at corners.
+    #if turnNumber is 0 and not sourceLane.isLeftmost
+    #  throw Error 'no left turns from this lane'
+    #if turnNumber is 2 and not sourceLane.isRightmost
+    #  throw Error 'no right turns from this lane'
     return true
 
   canEnterIntersection: ->
@@ -91,26 +93,11 @@ class Trajectory
         nextRoad = nextLane.road;
 
       turnNumber = currentRoad.getTurnDirection(nextRoad)
+      
+      laneNumber = @car.chooseLaneNumber(turnNumber, currentRoad)
 
-      laneNumber = switch turnNumber
-        when 0
-          R = nextRoad.lanesNumber - 1
-          while nextRoad.lanes[R].isClosed
-            R -= 1
-          R # return R
-        when 1
-          R = _.random(0, nextRoad.lanesNumber - 1)
-          while nextRoad.lanes[R].isClosed
-            R = _.random(0, nextRoad.lanesNumber - 1)
-          R # return R pass
-        when 2
-          R = 0
-          while nextRoad.lanes[R].isClosed
-            R += 1
-          R # return
-
-      nextLane = nextRoad.lanes[R]
-      @car.nextLane = nextRoad.lanes[R]
+      nextLane = nextRoad.lanes[laneNumber]
+      @car.nextLane = nextRoad.lanes[laneNumber]
 
     else
       turnNumber = sourceLane.getTurnDirection(nextLane)

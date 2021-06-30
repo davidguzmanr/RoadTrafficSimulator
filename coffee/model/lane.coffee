@@ -5,7 +5,7 @@ _ = require 'underscore'
 Segment = require '../geom/segment'
 
 class Lane
-  constructor: (@sourceSegment, @targetSegment, @road) ->
+  constructor: (@sourceSegment, @targetSegment, @road, @laneIndex) ->
     @leftAdjacent = null
     @rightAdjacent = null
     @leftmostAdjacent = null
@@ -49,6 +49,7 @@ class Lane
 
   # Comment-Mario: Tries to open the lane if it is closed
   tryOpen: ->
+    #TODO: Do this for all lanes in road.
     road = @road
     if @isClosed == false
       return true
@@ -63,16 +64,32 @@ class Lane
        # The problem is here? Dunno
        next_road = road.oppositeRoad
        new_lanes = next_road.lanes
+      
+       console.log("old direction:")
+       console.log(@direction)
 
        # Change the direction and other attributes to make it go in the other direction
        @direction += Math.PI;
+
+       console.log("new direction")
+       console.log(@direction)
+       console.log("new_fixed")
+       console.log(((@direction + 2*Math.PI)% (2*Math.PI)))
+
        @road = next_road
 
        # removed_lane.sourceSegment, removed_lane.targetSegment = removed_lane.targetSegment, removed_lane.sourceSegment;
 
        # Add removed_lane at [0], i.e., rightmostLane
-       new_lanes.unshift(@)
 
+       #proper_direction = ((@direction + 2*Math.PI)% (2*Math.PI))
+
+       #if(proper_direction == 0 || proper_direction == Math.PI || proper_direction == (Math.PI/2) || proper_direction == (3*Math.PI/2))
+       new_lanes.push(@)
+       #else
+       #  new_lanes.unshift(@) #Problem is here. Still happens when a W->E changes to E->W
+       #N->S to S->N works fine, but S->N to N->S probably does not.
+       @laneIndex = next_road.lanesNumber
        next_road.lanes = new_lanes
        # next_road.rightmostLane = removed_lane;
        next_road.lanesNumber += 1
